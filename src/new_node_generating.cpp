@@ -24,7 +24,6 @@ using namespace std;
 
 // 选择待分支节点
 int SelectBranchNode(ProblemParams& params, ProblemData& data, BPNode& parent_node) {
-
     int parent_branch_flag = -1;
     int pos = -1;
     int num_nodes = data.nodes_.size();
@@ -39,8 +38,7 @@ int SelectBranchNode(ProblemParams& params, ProblemData& data, BPNode& parent_no
                 if (data.nodes_[k].lower_bound_ < params.best_obj_) {
                     // 下界优于当前最优, 保留该节点
                     pos = k;
-                }
-                else {
+                } else {
                     // 下界不优, 执行剪枝
                     int temp_idx = data.nodes_[k].id_;
                     cout << "[节点选择] 节点_" << temp_idx << " 需剪枝\n";
@@ -91,8 +89,7 @@ int SelectBranchNode(ProblemParams& params, ProblemData& data, BPNode& parent_no
     if (pos == -1) {
         parent_branch_flag = 0;
         cout << "[节点选择] 无可分支节点\n";
-    }
-    else {
+    } else {
         parent_branch_flag = 1;
         parent_node = data.nodes_[pos];
         parent_node.lower_bound_ = 1;
@@ -105,7 +102,6 @@ int SelectBranchNode(ProblemParams& params, ProblemData& data, BPNode& parent_no
 
 // 生成新的子节点
 void CreateChildNode(ProblemParams& params, ProblemData& data, BPNode& new_node, BPNode& parent_node) {
-
     // 初始化节点基本信息
     int num_nodes = data.nodes_.size();
     new_node.id_ = num_nodes + 1;
@@ -185,8 +181,7 @@ void CreateChildNode(ProblemParams& params, ProblemData& data, BPNode& new_node,
     if (num_branched <= 1) {
         // 根节点的直接子节点
         new_node.branched_vals_.push_back(final_int_val);
-    }
-    else {
+    } else {
         // 其他节点: 继承父节点的历史值并添加新值
         for (int col = 0; col < num_branched - 1; col++) {
             double val = parent_node.branched_vals_[col];

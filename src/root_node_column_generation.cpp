@@ -11,7 +11,6 @@ using namespace std;
 
 // 根节点列生成主循环
 void SolveRootCG(ProblemParams& params, ProblemData& data, BPNode& root_node) {
-
     cout << "[列生成] 根节点列生成开始\n";
 
     // 初始化 CPLEX 环境和模型对象

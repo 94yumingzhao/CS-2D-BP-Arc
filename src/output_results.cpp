@@ -15,7 +15,6 @@ using namespace std;
 
 // 输出启发式求解结果
 void ExportResults(ProblemParams& params, ProblemData& data) {
-
     int num_stocks = static_cast<int>(data.used_stocks_.size());
     int num_items = static_cast<int>(data.assigned_items_.size());
     int num_strips = static_cast<int>(data.strips_.size());

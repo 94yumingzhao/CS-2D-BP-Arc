@@ -11,7 +11,6 @@ using namespace std;
 
 // 分支定价搜索树主循环
 int RunBranchAndPrice(ProblemParams& params, ProblemData& data) {
-
     params.num_nodes_ = 1;
 
     // 分支定价主循环

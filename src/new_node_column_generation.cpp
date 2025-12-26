@@ -20,7 +20,6 @@ void SolveNodeCG(
     ProblemData& data,
     BPNode& cur_node,
     BPNode& parent_node) {
-
     // 第一步: 初始化 CPLEX 环境
     IloEnv mp_env;
     IloModel mp_model(mp_env);

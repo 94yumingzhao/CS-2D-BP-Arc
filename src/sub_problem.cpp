@@ -24,7 +24,6 @@ using namespace std;
 // 约束: sum(w_j * G_j) <= W (母板宽度限制)
 // 返回: 1=找到改进列, 0=无改进列
 int SolveSP1(ProblemParams& params, ProblemData& data, BPNode& node) {
-
     int num_y_cols = node.y_cols_.size();
     int num_x_cols = node.x_cols_.size();
     int num_strip_types = params.num_strip_types_;
@@ -182,7 +181,6 @@ int SolveSP1(ProblemParams& params, ProblemData& data, BPNode& node) {
 // 参数: strip_type_id = 当前条带类型编号 (1-based)
 // 返回: 1=求解成功, 0=无可行子件或无需求解
 int SolveSP2(ProblemParams& params, ProblemData& data, BPNode& node, int strip_type_id) {
-
     int num_strip_types = params.num_strip_types_;
     int num_item_types = params.num_item_types_;
     int result = -1;

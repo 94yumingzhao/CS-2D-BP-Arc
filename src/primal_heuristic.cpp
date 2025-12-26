@@ -11,7 +11,6 @@ using namespace std;
 
 // 原始启发式生成初始解
 void RunHeuristic(ProblemParams& params, ProblemData& data, BPNode& root_node) {
-
     int num_item_types = params.num_item_types_;
     int num_strip_types = params.num_strip_types_;
 
@@ -26,7 +25,6 @@ void RunHeuristic(ProblemParams& params, ProblemData& data, BPNode& root_node) {
 
     // 主循环: 逐个母板进行切割
     while (params.is_finished_ == false) {
-
         // 从母板列表取出一块母板
         data.stocks_.erase(data.stocks_.begin());
 
@@ -64,7 +62,6 @@ void RunHeuristic(ProblemParams& params, ProblemData& data, BPNode& root_node) {
             if (data.items_[j].length_ <= remain_area.length_
                 && data.items_[j].width_ <= remain_area.width_
                 && data.items_[j].assign_flag_ == 0) {
-
                 // 创建条带的第一个子件
                 Item head_item;
                 data.items_[j].assign_flag_ = 1;
@@ -121,7 +118,6 @@ void RunHeuristic(ProblemParams& params, ProblemData& data, BPNode& root_node) {
                     if (data.items_[m].length_ <= strip_remain.length_
                         && data.items_[m].width_ <= strip_remain.width_
                         && data.items_[m].assign_flag_ == 0) {
-
                         Item new_item;
                         data.items_[m].assign_flag_ = 1;
 

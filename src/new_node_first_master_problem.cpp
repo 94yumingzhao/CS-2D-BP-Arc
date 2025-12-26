@@ -32,7 +32,6 @@ bool SolveNodeInitMP(
     IloNumVarArray& mp_vars,
     BPNode& cur_node,
     BPNode& parent_node) {
-
     // 问题规模
     int num_y_cols = cur_node.y_cols_.size();
     int num_x_cols = cur_node.x_cols_.size();

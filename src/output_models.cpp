@@ -15,7 +15,6 @@ using namespace std;
 
 // 输出原始主问题矩阵
 void ExportMP(ProblemParams& params, ProblemData& data, BPNode& cur_node) {
-
     ofstream data_file;
     data_file.open("Master Problem.txt", ios::app);
 
@@ -109,7 +108,6 @@ void ExportMP(ProblemParams& params, ProblemData& data, BPNode& cur_node) {
 
 // 输出对偶主问题矩阵
 void ExportDualMP(ProblemParams& params, ProblemData& data, BPNode& cur_node) {
-
     ofstream data_file;
     data_file.open("Dual Master Problem.txt", ios::app);
 

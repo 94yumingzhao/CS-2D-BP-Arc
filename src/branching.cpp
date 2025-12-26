@@ -11,7 +11,6 @@ using namespace std;
 
 // 完成节点处理
 int ProcessNode(ProblemParams& params, ProblemData& data, BPNode& node) {
-
     int is_integer = -1;
     int need_search = -1;
 
@@ -22,8 +21,7 @@ int ProcessNode(ProblemParams& params, ProblemData& data, BPNode& node) {
     if (node.prune_flag_ == 1) {
         // 节点已被剪枝
         need_search = 1;
-    }
-    else {
+    } else {
         if (is_integer == 0) {
             // 存在非整数解, 记录分支变量信息
             int var_id = node.branch_var_id_;
@@ -85,7 +83,6 @@ int ProcessNode(ProblemParams& params, ProblemData& data, BPNode& node) {
 
 // 选择分支变量
 int SelectBranchVar(ProblemParams& params, ProblemData& data, BPNode& node) {
-
     int is_integer = 1;
     double sol_val;
 

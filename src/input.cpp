@@ -11,7 +11,6 @@ using namespace std;
 
 // 字符串分割函数
 void SplitString(const string& str, vector<string>& result, const string& delimiter) {
-
     string::size_type start_pos, delim_pos;
 
     delim_pos = str.find(delimiter);
@@ -33,7 +32,6 @@ void SplitString(const string& str, vector<string>& result, const string& delimi
 
 // 读取问题数据
 void LoadInput(ProblemParams& params, ProblemData& data) {
-
     ostringstream path_stream;
     string file_path;
     string line;
@@ -130,7 +128,6 @@ void LoadInput(ProblemParams& params, ProblemData& data) {
 
         cout << "[数据] 子件总需求: " << total_demand << "\n";
         fin.close();
-
     } else {
         cerr << "[错误] 无法打开文件: " << file_path << "\n";
         cerr << "[错误] 程序终止\n";

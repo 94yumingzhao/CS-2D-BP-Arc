@@ -26,7 +26,6 @@ void UpdateMP(
     IloRangeArray& mp_cons,
     IloNumVarArray& mp_vars,
     BPNode& node) {
-
     // 问题规模
     int num_y_cols = node.y_cols_.size();
     int num_x_cols = node.x_cols_.size();
@@ -146,7 +145,6 @@ void SolveFinalMP(
     IloRangeArray& mp_cons,
     IloNumVarArray& mp_vars,
     BPNode& node) {
-
     // 问题规模
     int num_y_cols = node.y_cols_.size();
     int num_x_cols = node.x_cols_.size();

@@ -31,7 +31,6 @@ bool SolveRootInitMP(
     IloRangeArray& mp_cons,
     IloNumVarArray& mp_vars,
     BPNode& root_node) {
-
     // 问题规模
     int num_y_cols = root_node.y_cols_.size();   // Y 列数量 (母板模式数)
     int num_x_cols = root_node.x_cols_.size();   // X 列数量 (条带模式数)
