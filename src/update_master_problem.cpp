@@ -4,273 +4,193 @@
 //
 // 功能: 在列生成过程中动态更新主问题
 //
-// 包含两个核心函数:
-//   1. SolveUpdateMasterProblem: 添加新列并重新求解
-//   2. SolveFinalMasterProblem: 列生成收敛后求解最终问题
-//
-// 列生成迭代流程:
-//
-//   ┌─────────────────┐
-//   │  求解主问题 MP  │
-//   │  (获取对偶价格) │
-//   └────────┬────────┘
-//            │
-//            v
-//   ┌─────────────────┐
-//   │  求解子问题 SP  │
-//   │  (寻找改进列)   │
-//   └────────┬────────┘
-//            │
-//    ┌───────┴───────┐
-//    │ Reduced Cost  │
-//    │    < 0 ?      │
-//    └───────┬───────┘
-//       Yes  │  No
-//            │   └──> 收敛, 调用 SolveFinalMasterProblem
-//            v
-//   ┌─────────────────┐
-//   │  添加新列到 MP  │──┐
-//   └─────────────────┘  │
-//            ^           │
-//            └───────────┘
-//
 // =============================================================================
 
 #include "2DBP.h"
 
 using namespace std;
 
-// -----------------------------------------------------------------------------
-// SolveUpdateMasterProblem - 添加新列并重新求解主问题
-// -----------------------------------------------------------------------------
-// 功能: 将子问题找到的改进列添加到主问题, 然后重新求解
-// 参数:
-//   Values    - 全局参数
-//   Lists     - 全局列表
-//   Env_MP    - CPLEX 环境
-//   Model_MP  - 主问题模型
-//   Obj_MP    - 目标函数对象
-//   Cons_MP   - 约束数组
-//   Vars_MP   - 变量数组
-//   this_node - 当前节点
-//
-// 新列类型判断:
-//   - Y_col_flag = 1: 添加新的 Y 列 (母板切割模式)
-//   - Y_col_flag = 0: 添加新的 X 列 (条带切割模式)
-// -----------------------------------------------------------------------------
-void SolveUpdateMasterProblem(
-	All_Values& Values,
-	All_Lists& Lists,
-	IloEnv& Env_MP,
-	IloModel& Model_MP,
-	IloObjective& Obj_MP,
-	IloRangeArray& Cons_MP,
-	IloNumVarArray& Vars_MP,
-	Node& this_node) {
 
-	// =========================================================================
-	// 问题规模
-	// =========================================================================
-	int K_num = this_node.Y_cols_list.size();
-	int P_num = this_node.X_cols_list.size();
-	int J_num = Values.strip_types_num;
-	int N_num = Values.item_types_num;
-	int all_cols_num = K_num + P_num;
-	int all_rows_num = J_num + N_num;
+// =============================================================================
+// UpdateMP - 添加新列并重新求解主问题
+// =============================================================================
+void UpdateMP(
+    ProblemParams& params,
+    ProblemData& data,
+    IloEnv& mp_env,
+    IloModel& mp_model,
+    IloObjective& mp_obj,
+    IloRangeArray& mp_cons,
+    IloNumVarArray& mp_vars,
+    BPNode& node) {
 
-	// =========================================================================
-	// 情况 1: 添加新的 Y 列 (母板切割模式)
-	// =========================================================================
-	// Y 变量特点:
-	//   - 目标系数 = 1 (每使用一块母板, 目标函数 +1)
-	//   - 添加到变量列表末尾
-	// =========================================================================
-	if (this_node.Y_col_flag == 1) {
-		// ----- 构建 CPLEX 列 -----
-		IloNum obj_para = 1;
-		IloNumColumn CplexCol = (Obj_MP)(obj_para);
+    // =========================================================================
+    // 问题规模
+    // =========================================================================
+    int num_y_cols = node.y_cols_.size();
+    int num_x_cols = node.x_cols_.size();
+    int num_strip_types = params.num_strip_types_;
+    int num_item_types = params.num_item_types_;
+    int num_rows = num_strip_types + num_item_types;
 
-		for (int row = 0; row < all_rows_num; row++) {
-			IloNum row_para = this_node.new_Y_col[row];
-			CplexCol += (Cons_MP)[row](row_para);
-		}
+    // =========================================================================
+    // 情况 1: 添加新的 Y 列 (母板切割模式)
+    // =========================================================================
+    if (node.col_type_flag_ == 1) {
+        IloNum obj_coef = 1;
+        IloNumColumn cplex_col = mp_obj(obj_coef);
 
-		// ----- 创建新变量 -----
-		int cols_num = this_node.Y_cols_list.size();
-		string var_name = "Y_" + to_string(cols_num + 1);
-		IloNum var_min = 0;
-		IloNum var_max = IloInfinity;
-		IloNumVar Var_Y(CplexCol, var_min, var_max, ILOFLOAT, var_name.c_str());
-		(Vars_MP).add(Var_Y);
-		CplexCol.end();
+        for (int row = 0; row < num_rows; row++) {
+            IloNum row_coef = node.new_y_col_[row];
+            cplex_col += mp_cons[row](row_coef);
+        }
 
-		// ----- 更新节点的列集合 -----
-		vector<double> new_col;
-		for (int row = 0; row < all_rows_num; row++) {
-			new_col.push_back(this_node.new_Y_col[row]);
-		}
+        int cols_num = node.y_cols_.size();
+        string var_name = "Y_" + to_string(cols_num + 1);
+        IloNum var_lb = 0;
+        IloNum var_ub = IloInfinity;
+        IloNumVar var_y(cplex_col, var_lb, var_ub, ILOFLOAT, var_name.c_str());
+        mp_vars.add(var_y);
+        cplex_col.end();
 
-		this_node.Y_cols_list.push_back(new_col);
-		this_node.model_matrix.insert(this_node.model_matrix.begin() + this_node.Y_cols_list.size(), new_col);
-		this_node.new_Y_col.clear();
-	}
+        vector<double> new_col;
+        for (int row = 0; row < num_rows; row++) {
+            new_col.push_back(node.new_y_col_[row]);
+        }
 
-	// =========================================================================
-	// 情况 2: 添加新的 X 列 (条带切割模式)
-	// =========================================================================
-	// X 变量特点:
-	//   - 目标系数 = 0 (条带模式不直接影响目标)
-	//   - 可能同时添加多个新列
-	// =========================================================================
-	if (this_node.Y_col_flag == 0) {
-		int new_cols_num = this_node.new_X_cols_list.size();
+        node.y_cols_.push_back(new_col);
+        node.matrix_.insert(node.matrix_.begin() + node.y_cols_.size(), new_col);
+        node.new_y_col_.clear();
+    }
 
-		for (int col = 0; col < new_cols_num; col++) {
-			// ----- 构建 CPLEX 列 -----
-			IloNum obj_para = 0;
-			IloNumColumn CplexCol = (Obj_MP)(obj_para);
+    // =========================================================================
+    // 情况 2: 添加新的 X 列 (条带切割模式)
+    // =========================================================================
+    if (node.col_type_flag_ == 0) {
+        int num_new_cols = node.new_x_cols_.size();
 
-			for (int row = 0; row < all_rows_num; row++) {
-				IloNum row_para = this_node.new_X_cols_list[col][row];
-				CplexCol += (Cons_MP)[row](row_para);
-			}
+        for (int col = 0; col < num_new_cols; col++) {
+            IloNum obj_coef = 0;
+            IloNumColumn cplex_col = mp_obj(obj_coef);
 
-			// ----- 创建新变量 -----
-			int old_item_cols_num = this_node.X_cols_list.size();
-			string var_name = "X_" + to_string(old_item_cols_num + 1);
-			IloNum var_min = 0;
-			IloNum var_max = IloInfinity;
-			IloNumVar Var_X(CplexCol, var_min, var_max, ILOFLOAT, var_name.c_str());
-			(Vars_MP).add(Var_X);
-			CplexCol.end();
+            for (int row = 0; row < num_rows; row++) {
+                IloNum row_coef = node.new_x_cols_[col][row];
+                cplex_col += mp_cons[row](row_coef);
+            }
 
-			// ----- 更新节点的列集合 -----
-			vector<double> temp_col;
-			for (int row = 0; row < all_rows_num; row++) {
-				temp_col.push_back(this_node.new_X_cols_list[col][row]);
-			}
+            int old_cols_num = node.x_cols_.size();
+            string var_name = "X_" + to_string(old_cols_num + 1);
+            IloNum var_lb = 0;
+            IloNum var_ub = IloInfinity;
+            IloNumVar var_x(cplex_col, var_lb, var_ub, ILOFLOAT, var_name.c_str());
+            mp_vars.add(var_x);
+            cplex_col.end();
 
-			this_node.X_cols_list.push_back(temp_col);
-			this_node.model_matrix.insert(this_node.model_matrix.end(), temp_col);
-		}
+            vector<double> temp_col;
+            for (int row = 0; row < num_rows; row++) {
+                temp_col.push_back(node.new_x_cols_[col][row]);
+            }
 
-		this_node.new_X_cols_list.clear();
-	}
+            node.x_cols_.push_back(temp_col);
+            node.matrix_.insert(node.matrix_.end(), temp_col);
+        }
 
-	// =========================================================================
-	// 求解更新后的主问题
-	// =========================================================================
-	IloCplex MP_cplex(Model_MP);
-	MP_cplex.extract(Model_MP);
-	MP_cplex.setOut(Env_MP.getNullStream());
-	MP_cplex.solve();
+        node.new_x_cols_.clear();
+    }
 
-	cout << "[主问题] 迭代 " << this_node.iter << ", 目标值 = "
-	     << fixed << setprecision(4) << MP_cplex.getValue(Obj_MP) << "\n";
-	cout.unsetf(ios::fixed);
+    // =========================================================================
+    // 求解更新后的主问题
+    // =========================================================================
+    IloCplex mp_cplex(mp_model);
+    mp_cplex.extract(mp_model);
+    mp_cplex.setOut(mp_env.getNullStream());
+    mp_cplex.solve();
 
-	// =========================================================================
-	// 提取对偶价格 (用于下一次子问题定价)
-	// =========================================================================
-	this_node.dual_prices_list.clear();
+    cout << "[主问题] 迭代 " << node.iter_ << ", 目标值 = "
+         << fixed << setprecision(4) << mp_cplex.getValue(mp_obj) << "\n";
+    cout.unsetf(ios::fixed);
 
-	// ----- 条带约束对偶价格 -----
-	for (int row = 0; row < J_num; row++) {
-		double dual_val = MP_cplex.getDual(Cons_MP[row]);
-		if (dual_val == -0) dual_val = 0;
-		this_node.dual_prices_list.push_back(dual_val);
-	}
+    // =========================================================================
+    // 提取对偶价格
+    // =========================================================================
+    node.duals_.clear();
 
-	// ----- 子件约束对偶价格 -----
-	for (int row = J_num; row < J_num + N_num; row++) {
-		double dual_val = MP_cplex.getDual(Cons_MP[row]);
-		if (dual_val == -0) dual_val = 0;
-		this_node.dual_prices_list.push_back(dual_val);
-	}
+    for (int row = 0; row < num_strip_types; row++) {
+        double dual_val = mp_cplex.getDual(mp_cons[row]);
+        if (dual_val == -0) dual_val = 0;
+        node.duals_.push_back(dual_val);
+    }
+
+    for (int row = num_strip_types; row < num_strip_types + num_item_types; row++) {
+        double dual_val = mp_cplex.getDual(mp_cons[row]);
+        if (dual_val == -0) dual_val = 0;
+        node.duals_.push_back(dual_val);
+    }
 }
 
-// -----------------------------------------------------------------------------
-// SolveFinalMasterProblem - 求解列生成收敛后的最终主问题
-// -----------------------------------------------------------------------------
-// 功能: 当子问题无法找到改进列时, 求解最终 LP 并记录下界
-// 参数:
-//   Values    - 全局参数
-//   Lists     - 全局列表
-//   Env_MP    - CPLEX 环境
-//   Model_MP  - 主问题模型
-//   Obj_MP    - 目标函数对象
-//   Cons_MP   - 约束数组
-//   Vars_MP   - 变量数组
-//   this_node - 当前节点
-//
-// 输出:
-//   - this_node.LB: 节点的 LP 下界
-//   - this_node.all_solns_val_list: 所有变量的解值
-// -----------------------------------------------------------------------------
-void SolveFinalMasterProblem(
-	All_Values& Values,
-	All_Lists& Lists,
-	IloEnv& Env_MP,
-	IloModel& Model_MP,
-	IloObjective& Obj_MP,
-	IloRangeArray& Cons_MP,
-	IloNumVarArray& Vars_MP,
-	Node& this_node) {
 
-	// =========================================================================
-	// 问题规模
-	// =========================================================================
-	int K_num = this_node.Y_cols_list.size();
-	int P_num = this_node.X_cols_list.size();
-	int N_num = Values.item_types_num;
-	int J_num = Values.strip_types_num;
-	int all_rows_num = N_num + J_num;
-	int all_cols_num = K_num + P_num;
+// =============================================================================
+// SolveFinalMP - 求解列生成收敛后的最终主问题
+// =============================================================================
+void SolveFinalMP(
+    ProblemParams& params,
+    ProblemData& data,
+    IloEnv& mp_env,
+    IloModel& mp_model,
+    IloObjective& mp_obj,
+    IloRangeArray& mp_cons,
+    IloNumVarArray& mp_vars,
+    BPNode& node) {
 
-	// =========================================================================
-	// 求解最终主问题
-	// =========================================================================
-	IloCplex MP_cplex(Model_MP);
-	MP_cplex.extract(Model_MP);
-	MP_cplex.setOut(Env_MP.getNullStream());
-	MP_cplex.exportModel("Final Master Problem.lp");
-	MP_cplex.solve();
+    // =========================================================================
+    // 问题规模
+    // =========================================================================
+    int num_y_cols = node.y_cols_.size();
+    int num_x_cols = node.x_cols_.size();
+    int num_item_types = params.num_item_types_;
+    int num_strip_types = params.num_strip_types_;
+    int num_rows = num_item_types + num_strip_types;
+    int num_cols = num_y_cols + num_x_cols;
 
-	// ----- 记录 LP 下界 -----
-	this_node.LB = MP_cplex.getValue(Obj_MP);
+    // =========================================================================
+    // 求解最终主问题
+    // =========================================================================
+    IloCplex mp_cplex(mp_model);
+    mp_cplex.extract(mp_model);
+    mp_cplex.setOut(mp_env.getNullStream());
+    mp_cplex.exportModel("Final Master Problem.lp");
+    mp_cplex.solve();
 
-	cout << "[主问题] 最终目标值 = " << fixed << setprecision(4) << this_node.LB << "\n";
-	cout.unsetf(ios::fixed);
+    node.lower_bound_ = mp_cplex.getValue(mp_obj);
 
-	// =========================================================================
-	// 保存所有变量的解值
-	// =========================================================================
-	// 用于:
-	//   1. 分支决策 (选择分数解进行分支)
-	//   2. 启发式构造整数解
-	// =========================================================================
-	for (int col = 0; col < all_cols_num; col++) {
-		IloNum soln_val = MP_cplex.getValue(Vars_MP[col]);
-		if (soln_val == -0) soln_val = 0;
-		this_node.all_solns_val_list.push_back(soln_val);
-	}
+    cout << "[主问题] 最终目标值 = " << fixed << setprecision(4) << node.lower_bound_ << "\n";
+    cout.unsetf(ios::fixed);
 
-	// =========================================================================
-	// 统计非零解 (用于调试输出)
-	// =========================================================================
-	int Y_fsb_num = 0;
-	int X_fsb_num = 0;
+    // =========================================================================
+    // 保存所有变量的解值
+    // =========================================================================
+    for (int col = 0; col < num_cols; col++) {
+        IloNum sol_val = mp_cplex.getValue(mp_vars[col]);
+        if (sol_val == -0) sol_val = 0;
+        node.solution_.push_back(sol_val);
+    }
 
-	for (int col = 0; col < K_num; col++) {
-		double soln_val = MP_cplex.getValue(Vars_MP[col]);
-		if (soln_val > 0) Y_fsb_num++;
-	}
+    // =========================================================================
+    // 统计非零解
+    // =========================================================================
+    int num_y_nonzero = 0;
+    int num_x_nonzero = 0;
 
-	for (int col = K_num; col < K_num + P_num; col++) {
-		double soln_val = MP_cplex.getValue(Vars_MP[col]);
-		if (soln_val > 0) X_fsb_num++;
-	}
+    for (int col = 0; col < num_y_cols; col++) {
+        double sol_val = mp_cplex.getValue(mp_vars[col]);
+        if (sol_val > 0) num_y_nonzero++;
+    }
 
-	cout << "[主问题] 非零解: Y=" << Y_fsb_num << ", X=" << X_fsb_num
-	     << " (总变量: " << all_cols_num << ")\n";
+    for (int col = num_y_cols; col < num_y_cols + num_x_cols; col++) {
+        double sol_val = mp_cplex.getValue(mp_vars[col]);
+        if (sol_val > 0) num_x_nonzero++;
+    }
+
+    cout << "[主问题] 非零解: Y=" << num_y_nonzero << ", X=" << num_x_nonzero
+         << " (总变量: " << num_cols << ")\n";
 }

@@ -5,8 +5,8 @@
 // 功能: 将主问题模型和对偶问题模型输出到文本文件, 用于调试和验证
 //
 // 包含函数:
-//   1. OutputMasterProblem     - 输出原始主问题矩阵
-//   2. OutputDualMasterProblem - 输出对偶主问题矩阵
+//   1. OutputPrimalMP - 输出原始主问题矩阵
+//   2. OutputDualMP   - 输出对偶主问题矩阵
 //
 // 输出文件:
 //   - Master Problem.txt:      原始主问题系数矩阵
@@ -30,7 +30,7 @@
 using namespace std;
 
 // -----------------------------------------------------------------------------
-// OutputMasterProblem - 输出原始主问题矩阵
+// ExportMP - 输出原始主问题矩阵
 // -----------------------------------------------------------------------------
 // 功能: 将当前主问题的系数矩阵输出到文本文件
 //
@@ -49,110 +49,110 @@ using namespace std;
 //   - B[i,p]: 条带模式 p 产出子件类型 i 的数量
 //
 // 参数:
-//   Values    - 全局参数
-//   Lists     - 全局列表
-//   this_node - 当前节点
+//   params   - 全局参数
+//   data     - 全局列表
+//   cur_node - 当前节点
 // -----------------------------------------------------------------------------
-void OutputMasterProblem(All_Values& Values, All_Lists& Lists, Node& this_node) {
+void ExportMP(ProblemParams& params, ProblemData& data, BPNode& cur_node) {
 
-	ofstream dataFile;
-	dataFile.open("Master Problem.txt", ios::app);
+    ofstream data_file;
+    data_file.open("Master Problem.txt", ios::app);
 
-	// =========================================================================
-	// 问题规模
-	// =========================================================================
-	int K_num = this_node.Y_cols_list.size();  // Y 变量数 (母板模式)
-	int P_num = this_node.X_cols_list.size();  // X 变量数 (条带模式)
-	int J_num = Values.strip_types_num;        // 条带类型数
-	int N_num = Values.item_types_num;         // 子件类型数
+    // =========================================================================
+    // 问题规模
+    // =========================================================================
+    int num_y_cols = cur_node.y_cols_.size();
+    int num_x_cols = cur_node.x_cols_.size();
+    int num_strip_types = params.num_strip_types_;
+    int num_item_types = params.num_item_types_;
 
-	int all_cols_num = K_num + P_num;
-	int all_rows_num = J_num + N_num;
+    int num_cols = num_y_cols + num_x_cols;
+    int num_rows = num_strip_types + num_item_types;
 
-	// =========================================================================
-	// 输出表头
-	// =========================================================================
-	dataFile << endl;
-	dataFile << "MP-" << this_node.iter << endl;
+    // =========================================================================
+    // 输出表头
+    // =========================================================================
+    data_file << endl;
+    data_file << "MP-" << cur_node.iter_ << endl;
 
-	// ----- 列名: Y 变量 + X 变量 -----
-	for (int col = 0; col < all_cols_num; col++) {
-		if (col < K_num) {
-			dataFile << "y" << col + 1 << "\t";
-		}
-		if (col >= K_num) {
-			dataFile << "x" << col - K_num + 1 << "\t";
-		}
-	}
-	dataFile << endl;
+    // ----- 列名: Y 变量 + X 变量 -----
+    for (int col = 0; col < num_cols; col++) {
+        if (col < num_y_cols) {
+            data_file << "y" << col + 1 << "\t";
+        }
+        if (col >= num_y_cols) {
+            data_file << "x" << col - num_y_cols + 1 << "\t";
+        }
+    }
+    data_file << endl;
 
-	// ----- 分隔线 -----
-	for (int col = 0; col < all_cols_num; col++) {
-		dataFile << ("-----------");
-	}
-	dataFile << endl;
+    // ----- 分隔线 -----
+    for (int col = 0; col < num_cols; col++) {
+        data_file << ("-----------");
+    }
+    data_file << endl;
 
-	// =========================================================================
-	// 输出系数矩阵
-	// =========================================================================
-	for (int row = 0; row < all_rows_num + 1; row++) {
-		for (int col = 0; col < all_cols_num; col++) {
-			if (col < K_num) {
-				// ----- Y 列 (母板切割模式) -----
-				int col_pos = col;
-				if (row < J_num) {
-					// C 矩阵部分
-					dataFile << int(this_node.Y_cols_list[col_pos][row]) << "\t";
-				}
-				if (row == J_num) {
-					// 分隔行
-					dataFile << ("-----------");
-				}
-				if (row > J_num) {
-					// 0 矩阵部分
-					dataFile << int(this_node.Y_cols_list[col_pos][row - 1]) << "\t";
-				}
-			}
-			if (col >= K_num) {
-				// ----- X 列 (条带切割模式) -----
-				int col_pos = col - K_num;
-				if (row < J_num) {
-					// D 矩阵部分
-					dataFile << int(this_node.X_cols_list[col_pos][row]) << "\t";
-				}
-				if (row == J_num) {
-					// 分隔行
-					dataFile << ("-----------");
-				}
-				if (row > J_num) {
-					// B 矩阵部分
-					dataFile << int(this_node.X_cols_list[col_pos][row - 1]) << "\t";
-				}
-			}
-		}
+    // =========================================================================
+    // 输出系数矩阵
+    // =========================================================================
+    for (int row = 0; row < num_rows + 1; row++) {
+        for (int col = 0; col < num_cols; col++) {
+            if (col < num_y_cols) {
+                // ----- Y 列 (母板切割模式) -----
+                int col_pos = col;
+                if (row < num_strip_types) {
+                    // C 矩阵部分
+                    data_file << int(cur_node.y_cols_[col_pos][row]) << "\t";
+                }
+                if (row == num_strip_types) {
+                    // 分隔行
+                    data_file << ("-----------");
+                }
+                if (row > num_strip_types) {
+                    // 0 矩阵部分
+                    data_file << int(cur_node.y_cols_[col_pos][row - 1]) << "\t";
+                }
+            }
+            if (col >= num_y_cols) {
+                // ----- X 列 (条带切割模式) -----
+                int col_pos = col - num_y_cols;
+                if (row < num_strip_types) {
+                    // D 矩阵部分
+                    data_file << int(cur_node.x_cols_[col_pos][row]) << "\t";
+                }
+                if (row == num_strip_types) {
+                    // 分隔行
+                    data_file << ("-----------");
+                }
+                if (row > num_strip_types) {
+                    // B 矩阵部分
+                    data_file << int(cur_node.x_cols_[col_pos][row - 1]) << "\t";
+                }
+            }
+        }
 
-		// ----- 输出约束右端项 -----
-		if (row < J_num) {
-			// 条带平衡约束: >= 0
-			dataFile << ">=" << "\t" << "0";
-			dataFile << endl;
-		}
-		if (row == J_num) {
-			// 分隔行
-			dataFile << endl;
-		}
-		if (row > J_num) {
-			// 子件需求约束: >= demand
-			int row_pos = row - J_num - 1;
-			dataFile << ">=" << "\t" << int(Lists.all_item_types_list[row_pos].demand);
-			dataFile << endl;
-		}
-	}
-	dataFile.close();
+        // ----- 输出约束右端项 -----
+        if (row < num_strip_types) {
+            // 条带平衡约束: >= 0
+            data_file << ">=" << "\t" << "0";
+            data_file << endl;
+        }
+        if (row == num_strip_types) {
+            // 分隔行
+            data_file << endl;
+        }
+        if (row > num_strip_types) {
+            // 子件需求约束: >= demand
+            int row_pos = row - num_strip_types - 1;
+            data_file << ">=" << "\t" << int(data.item_types_[row_pos].demand_);
+            data_file << endl;
+        }
+    }
+    data_file.close();
 }
 
 // -----------------------------------------------------------------------------
-// OutputDualMasterProblem - 输出对偶主问题矩阵
+// ExportDualMP - 输出对偶主问题矩阵
 // -----------------------------------------------------------------------------
 // 功能: 将当前主问题的对偶形式输出到文本文件
 //
@@ -172,98 +172,98 @@ void OutputMasterProblem(All_Values& Values, All_Lists& Lists, Node& this_node) 
 //   [约束矩阵转置]                      <= c
 //
 // 参数:
-//   Values    - 全局参数
-//   Lists     - 全局列表
-//   this_node - 当前节点
+//   params   - 全局参数
+//   data     - 全局列表
+//   cur_node - 当前节点
 // -----------------------------------------------------------------------------
-void OutputDualMasterProblem(All_Values& Values, All_Lists& Lists, Node& this_node) {
+void ExportDualMP(ProblemParams& params, ProblemData& data, BPNode& cur_node) {
 
-	ofstream dataFile;
-	dataFile.open("Dual Master Problem.txt", ios::app);
+    ofstream data_file;
+    data_file.open("Dual Master Problem.txt", ios::app);
 
-	// =========================================================================
-	// 问题规模 (对偶问题行列互换)
-	// =========================================================================
-	int K_num = this_node.Y_cols_list.size();
-	int P_num = this_node.X_cols_list.size();
-	int J_num = Values.strip_types_num;
-	int N_num = Values.item_types_num;
+    // =========================================================================
+    // 问题规模 (对偶问题行列互换)
+    // =========================================================================
+    int num_y_cols = cur_node.y_cols_.size();
+    int num_x_cols = cur_node.x_cols_.size();
+    int num_strip_types = params.num_strip_types_;
+    int num_item_types = params.num_item_types_;
 
-	int all_rows_num = K_num + P_num;  // 对偶约束数 = 原始变量数
-	int all_cols_num = J_num + N_num;  // 对偶变量数 = 原始约束数
+    int num_rows = num_y_cols + num_x_cols;
+    int num_cols = num_strip_types + num_item_types;
 
-	// =========================================================================
-	// 输出表头
-	// =========================================================================
-	dataFile << endl;
-	dataFile << "MP-" << this_node.iter << endl;
+    // =========================================================================
+    // 输出表头
+    // =========================================================================
+    data_file << endl;
+    data_file << "MP-" << cur_node.iter_ << endl;
 
-	// ----- 对偶变量名: v (条带对偶) + w (子件对偶) -----
-	for (int col = 0; col < all_cols_num; col++) {
-		if (col < J_num) {
-			dataFile << "v" << col + 1 << "\t";
-		}
-		if (col >= J_num) {
-			dataFile << "w" << col - J_num + 1 << "\t";
-		}
-	}
-	dataFile << endl;
+    // ----- 对偶变量名: v (条带对偶) + w (子件对偶) -----
+    for (int col = 0; col < num_cols; col++) {
+        if (col < num_strip_types) {
+            data_file << "v" << col + 1 << "\t";
+        }
+        if (col >= num_strip_types) {
+            data_file << "w" << col - num_strip_types + 1 << "\t";
+        }
+    }
+    data_file << endl;
 
-	// ----- 分隔线 -----
-	for (int col = 0; col < all_cols_num; col++) {
-		dataFile << ("-----------");
-	}
-	dataFile << endl;
+    // ----- 分隔线 -----
+    for (int col = 0; col < num_cols; col++) {
+        data_file << ("-----------");
+    }
+    data_file << endl;
 
-	// =========================================================================
-	// 输出对偶目标系数
-	// =========================================================================
-	// 对偶目标: max 0 * v + d^T * w
-	// 其中 d = (demand_1, ..., demand_N)
-	// =========================================================================
-	for (int col = 0; col < all_cols_num; col++) {
-		if (col < J_num) {
-			// v 的系数 = 0 (条带约束右端项)
-			dataFile << int(Lists.all_item_types_list[col].demand) << "\t";
-		}
-		if (col >= J_num) {
-			// w 的系数 = demand (子件约束右端项)
-			dataFile << "0" << "\t";
-		}
-	}
-	dataFile << endl;
+    // =========================================================================
+    // 输出对偶目标系数
+    // =========================================================================
+    // 对偶目标: max 0 * v + d^T * w
+    // 其中 d = (demand_1, ..., demand_N)
+    // =========================================================================
+    for (int col = 0; col < num_cols; col++) {
+        if (col < num_strip_types) {
+            // v 的系数 = 0 (条带约束右端项)
+            data_file << int(data.item_types_[col].demand_) << "\t";
+        }
+        if (col >= num_strip_types) {
+            // w 的系数 = demand (子件约束右端项)
+            data_file << "0" << "\t";
+        }
+    }
+    data_file << endl;
 
-	// ----- 分隔线 -----
-	for (int col = 0; col < all_cols_num; col++) {
-		dataFile << ("-----------");
-	}
-	dataFile << endl;
+    // ----- 分隔线 -----
+    for (int col = 0; col < num_cols; col++) {
+        data_file << ("-----------");
+    }
+    data_file << endl;
 
-	// =========================================================================
-	// 输出对偶约束矩阵 (原始矩阵的转置)
-	// =========================================================================
-	for (int row = 0; row < all_rows_num; row++) {
-		for (int col = 0; col < all_cols_num; col++) {
-			if (row < K_num) {
-				// ----- Y 变量对应的对偶约束 -----
-				dataFile << int(this_node.Y_cols_list[row][col]) << "\t";
-			}
-			if (row >= K_num) {
-				// ----- X 变量对应的对偶约束 -----
-				int row_pos = row - K_num;
-				dataFile << int(this_node.X_cols_list[row_pos][col]) << "\t";
-			}
-		}
+    // =========================================================================
+    // 输出对偶约束矩阵 (原始矩阵的转置)
+    // =========================================================================
+    for (int row = 0; row < num_rows; row++) {
+        for (int col = 0; col < num_cols; col++) {
+            if (row < num_y_cols) {
+                // ----- Y 变量对应的对偶约束 -----
+                data_file << int(cur_node.y_cols_[row][col]) << "\t";
+            }
+            if (row >= num_y_cols) {
+                // ----- X 变量对应的对偶约束 -----
+                int row_pos = row - num_y_cols;
+                data_file << int(cur_node.x_cols_[row_pos][col]) << "\t";
+            }
+        }
 
-		// ----- 输出对偶约束右端项 -----
-		if (row < K_num) {
-			// Y 变量对偶约束: <= 1 (目标系数)
-			dataFile << ("<=\t1  y") << row + 1 << endl;
-		}
-		if (row >= K_num) {
-			// X 变量对偶约束: <= 0 (目标系数)
-			dataFile << ("<=\t0  x") << row - K_num + 1 << endl;
-		}
-	}
-	dataFile << endl;
+        // ----- 输出对偶约束右端项 -----
+        if (row < num_y_cols) {
+            // Y 变量对偶约束: <= 1 (目标系数)
+            data_file << ("<=\t1  y") << row + 1 << endl;
+        }
+        if (row >= num_y_cols) {
+            // X 变量对偶约束: <= 0 (目标系数)
+            data_file << ("<=\t0  x") << row - num_y_cols + 1 << endl;
+        }
+    }
+    data_file << endl;
 }

@@ -25,20 +25,6 @@
 //
 // 可视化示例:
 //
-//   ┌────────────────────────────────┐
-//   │ Stock (母板)                   │
-//   ├──────────┬─────────────────────┤
-//   │ Strip 1  │                     │
-//   │ ┌──────┐ │                     │
-//   │ │ I1   │ │  (废料区域)         │
-//   │ └──────┘ │                     │
-//   ├──────────┼──────────┬──────────┤
-//   │ Strip 2  │          │          │
-//   │ ┌──────┐ │ ┌──────┐ │ (废料)   │
-//   │ │ I2   │ │ │ I3   │ │          │
-//   │ └──────┘ │ └──────┘ │          │
-//   └──────────┴──────────┴──────────┘
-//
 // =============================================================================
 
 #include "2DBP.h"
@@ -46,7 +32,7 @@
 using namespace std;
 
 // -----------------------------------------------------------------------------
-// OutputHeuristicResults - 输出启发式求解结果
+// ExportResults - 输出启发式求解结果
 // -----------------------------------------------------------------------------
 // 功能: 将切割方案以坐标形式输出到控制台和文件
 //
@@ -59,105 +45,105 @@ using namespace std;
 //   - 包含母板边界、子件、条带的顶点坐标
 //
 // 参数:
-//   Values - 全局参数
-//   Lists  - 全局列表 (包含切割结果)
+//   params - 全局参数
+//   data   - 全局列表 (包含切割结果)
 // -----------------------------------------------------------------------------
-void OutputHeuristicResults(All_Values& Values, All_Lists& Lists) {
+void ExportResults(ProblemParams& params, ProblemData& data) {
 
-	int stocks_num = Lists.occupied_stocks_list.size();
-	int items_num = Lists.occupied_items_list.size();
-	int strips_num = Lists.all_strips_list.size();
+    int num_stocks = data.used_stocks_.size();
+    int num_items = data.assigned_items_.size();
+    int num_strips = data.strips_.size();
 
-	// =========================================================================
-	// 控制台输出: 切割方案摘要
-	// =========================================================================
-	cout << "[结果] 切割方案输出 (母板数: " << stocks_num << ")\n";
+    // =========================================================================
+    // 控制台输出: 切割方案摘要
+    // =========================================================================
+    cout << "[结果] 切割方案输出 (母板数: " << num_stocks << ")\n";
 
-	for (int pos = 0; pos < stocks_num; pos++) {
-		int LL = Lists.occupied_stocks_list[0].length;
-		int WW = Lists.occupied_stocks_list[0].width;
+    for (int pos = 0; pos < num_stocks; pos++) {
+        int stock_len = data.used_stocks_[0].length_;
+        int stock_wid = data.used_stocks_[0].width_;
 
-		// ----- 统计当前母板上的条带和子件数量 -----
-		int strip_count = 0;
-		int item_count = 0;
+        // ----- 统计当前母板上的条带和子件数量 -----
+        int strip_count = 0;
+        int item_count = 0;
 
-		for (size_t i = 0; i < strips_num; i++) {
-			if (Lists.all_strips_list[i].stock_idx == pos) strip_count++;
-		}
-		for (size_t i = 0; i < items_num; i++) {
-			if (Lists.occupied_items_list[i].stock_idx == pos) item_count++;
-		}
+        for (size_t i = 0; i < num_strips; i++) {
+            if (data.strips_[i].stock_id_ == pos) strip_count++;
+        }
+        for (size_t i = 0; i < num_items; i++) {
+            if (data.assigned_items_[i].stock_id_ == pos) item_count++;
+        }
 
-		cout << "[结果] 母板_" << Lists.occupied_stocks_list[pos].stock_idx
-		     << " (" << LL << " x " << WW << "): 条带=" << strip_count << ", 子件=" << item_count << "\n";
-	}
+        cout << "[结果] 母板_" << data.used_stocks_[pos].id_
+             << " (" << stock_len << " x " << stock_wid << "): 条带=" << strip_count << ", 子件=" << item_count << "\n";
+    }
 
-	// =========================================================================
-	// 文件输出: 切割方案坐标 (用于可视化绘图)
-	// =========================================================================
-	ostringstream s_in, s_out;
-	string in_str, out_str;
-	ofstream f_out;
+    // =========================================================================
+    // 文件输出: 切割方案坐标 (用于可视化绘图)
+    // =========================================================================
+    ostringstream s_in, s_out;
+    string in_str, out_str;
+    ofstream f_out;
 
-	for (int pos = 0; pos < stocks_num; pos++) {
-		// ----- 设置输出文件路径 -----
-		s_out.str("");
-		s_out << "D:/CuttingTXT/Stock_" << pos << ".txt";
-		out_str = s_out.str();
-		f_out.open(out_str, ios::out);
+    for (int pos = 0; pos < num_stocks; pos++) {
+        // ----- 设置输出文件路径 -----
+        s_out.str("");
+        s_out << "D:/CuttingTXT/Stock_" << pos << ".txt";
+        out_str = s_out.str();
+        f_out.open(out_str, ios::out);
 
-		int LL = Lists.occupied_stocks_list[0].length;
-		int WW = Lists.occupied_stocks_list[0].width;
+        int stock_len = data.used_stocks_[0].length_;
+        int stock_wid = data.used_stocks_[0].width_;
 
-		// =====================================================================
-		// 输出母板边界 (标识符: x)
-		// =====================================================================
-		// 四个顶点按逆时针顺序:
-		//   (0, 0) -> (0, W) -> (L, W) -> (L, 0)
-		// =====================================================================
-		f_out << 0 << "\t" << 0 << "\t" << "x" << endl;
-		f_out << 0 << "\t" << WW << "\t" << "x" << endl;
-		f_out << LL << "\t" << WW << "\t" << "x" << endl;
-		f_out << LL << "\t" << 0 << "\t" << "x" << endl;
+        // =====================================================================
+        // 输出母板边界 (标识符: x)
+        // =====================================================================
+        // 四个顶点按逆时针顺序:
+        //   (0, 0) -> (0, W) -> (L, W) -> (L, 0)
+        // =====================================================================
+        f_out << 0 << "\t" << 0 << "\t" << "x" << endl;
+        f_out << 0 << "\t" << stock_wid << "\t" << "x" << endl;
+        f_out << stock_len << "\t" << stock_wid << "\t" << "x" << endl;
+        f_out << stock_len << "\t" << 0 << "\t" << "x" << endl;
 
-		// =====================================================================
-		// 输出子件坐标 (标识符: I + 类型索引)
-		// =====================================================================
-		for (size_t i = 0; i < items_num; i++) {
-			if (Lists.occupied_items_list[i].stock_idx == pos) {
-				int X = Lists.occupied_items_list[i].pos_x;
-				int Y = Lists.occupied_items_list[i].pos_y;
-				int L = Lists.occupied_items_list[i].length;
-				int W = Lists.occupied_items_list[i].width;
-				int item_type_idx = Lists.occupied_items_list[i].item_type_idx;
+        // =====================================================================
+        // 输出子件坐标 (标识符: I + 类型索引)
+        // =====================================================================
+        for (size_t i = 0; i < num_items; i++) {
+            if (data.assigned_items_[i].stock_id_ == pos) {
+                int x = data.assigned_items_[i].x_;
+                int y = data.assigned_items_[i].y_;
+                int len = data.assigned_items_[i].length_;
+                int wid = data.assigned_items_[i].width_;
+                int item_type_id = data.assigned_items_[i].type_id_;
 
-				// 四个顶点按逆时针顺序
-				f_out << X << "\t" << Y << "\t" << "I" << item_type_idx << endl;
-				f_out << X << "\t" << Y + W << "\t" << "I" << item_type_idx << endl;
-				f_out << X + L << "\t" << Y + W << "\t" << "I" << item_type_idx << endl;
-				f_out << X + L << "\t" << Y << "\t" << "I" << item_type_idx << endl;
-			}
-		}
+                // 四个顶点按逆时针顺序
+                f_out << x << "\t" << y << "\t" << "I" << item_type_id << endl;
+                f_out << x << "\t" << y + wid << "\t" << "I" << item_type_id << endl;
+                f_out << x + len << "\t" << y + wid << "\t" << "I" << item_type_id << endl;
+                f_out << x + len << "\t" << y << "\t" << "I" << item_type_id << endl;
+            }
+        }
 
-		// =====================================================================
-		// 输出条带坐标 (标识符: S + 类型索引)
-		// =====================================================================
-		for (size_t i = 0; i < strips_num; i++) {
-			if (Lists.all_strips_list[i].stock_idx == pos) {
-				int X = Lists.all_strips_list[i].pos_x;
-				int Y = Lists.all_strips_list[i].pos_y;
-				int L = Lists.all_strips_list[i].length;
-				int W = Lists.all_strips_list[i].width;
-				int strip_type_idx = Lists.all_strips_list[i].strip_type_idx;
+        // =====================================================================
+        // 输出条带坐标 (标识符: S + 类型索引)
+        // =====================================================================
+        for (size_t i = 0; i < num_strips; i++) {
+            if (data.strips_[i].stock_id_ == pos) {
+                int x = data.strips_[i].x_;
+                int y = data.strips_[i].y_;
+                int len = data.strips_[i].length_;
+                int wid = data.strips_[i].width_;
+                int strip_type_id = data.strips_[i].type_id_;
 
-				// 四个顶点按逆时针顺序
-				f_out << X << "\t" << Y << "\t" << "S" << strip_type_idx << endl;
-				f_out << X << "\t" << Y + W << "\t" << "S" << strip_type_idx << endl;
-				f_out << X + L << "\t" << Y + W << "\t" << "S" << strip_type_idx << endl;
-				f_out << X + L << "\t" << Y << "\t" << "S" << strip_type_idx << endl;
-			}
-		}
+                // 四个顶点按逆时针顺序
+                f_out << x << "\t" << y << "\t" << "S" << strip_type_id << endl;
+                f_out << x << "\t" << y + wid << "\t" << "S" << strip_type_id << endl;
+                f_out << x + len << "\t" << y + wid << "\t" << "S" << strip_type_id << endl;
+                f_out << x + len << "\t" << y << "\t" << "S" << strip_type_id << endl;
+            }
+        }
 
-		f_out.close();
-	}
+        f_out.close();
+    }
 }

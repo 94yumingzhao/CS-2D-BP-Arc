@@ -4,24 +4,6 @@
 //
 // 功能: 实现节点处理和分支变量选择
 //
-// -----------------------------------------------------------------------------
-// 模块概述
-// -----------------------------------------------------------------------------
-//
-// 本模块负责分支定界算法中的核心决策:
-//   1. FinishNode: 完成节点处理, 检查整数性, 更新最优解
-//   2. ChooseVarToBranch: 选择第一个非整数变量作为分支变量
-//
-// 分支策略:
-//   - 本实现采用最简单的 "First Fractional" 策略
-//   - 即选择第一个遇到的非整数变量进行分支
-//   - 更高级的策略 (如 Strong Branching) 可作为未来改进
-//
-// 剪枝条件:
-//   1. 节点不可行 (主问题无解)
-//   2. 节点下界 >= 当前最优整数解 (无法改进)
-//   3. 所有变量均为整数 (叶节点, 可能更新最优解)
-//
 // =============================================================================
 
 #include "2DBP.h"
@@ -30,222 +12,137 @@ using namespace std;
 
 
 // =============================================================================
-// FinishNode - 完成节点处理
+// ProcessNode - 完成节点处理
 // =============================================================================
-//
-// 功能: 检查当前节点解的整数性, 决定下一步操作
-//
-// 处理流程:
-//
-//   +------------------+
-//   | 检查整数性       |
-//   | ChooseVarToBranch|
-//   +--------+---------+
-//            |
-//      +-----+-----+
-//      |           |
-//   存在分数    全为整数
-//      |           |
-//      v           v
-//   +--+--+    +---+---+
-//   |记录 |    |更新   |
-//   |分支 |    |最优解 |
-//   |变量 |    +---+---+
-//   +--+--+        |
-//      |           v
-//      |       +---+---+
-//      |       |剪枝或 |
-//      |       |继续   |
-//      |       +-------+
-//      v           |
-//   返回 0      返回 1
-//   (继续分支)  (搜索其他)
-//
-// 参数:
-//   Values    - 全局参数 (更新 optimal_LB)
-//   Lists     - 全局列表
-//   this_node - 当前节点 (更新分支变量信息)
-//
-// 返回值:
-//   0 = 存在非整数解, 需要继续分支
-//   1 = 全为整数解或已剪枝, 搜索其他节点
-//
-// =============================================================================
-int FinishNode(All_Values& Values, All_Lists& Lists, Node& this_node) {
+int ProcessNode(ProblemParams& params, ProblemData& data, BPNode& node) {
 
     // -------------------------------------------------------------------------
     // 状态变量
     // -------------------------------------------------------------------------
-    // node_int_flag: 整数性标志
-    //   0 = 存在非整数解
-    //   1 = 全为整数解
-    int node_int_flag = -1;
-
-    // tree_search_flag: 搜索策略标志 (返回值)
-    //   0 = 继续分支当前节点
-    //   1 = 搜索其他节点
-    int tree_search_flag = -1;
+    int is_integer = -1;
+    int need_search = -1;
 
     // =========================================================================
     // 检查整数性并选择分支变量
     // =========================================================================
-    node_int_flag = ChooseVarToBranch(Values, Lists, this_node);
+    is_integer = SelectBranchVar(params, data, node);
 
     // =========================================================================
     // 根据整数性决定下一步操作
     // =========================================================================
 
-    if (this_node.node_pruned_flag == 1) {
+    if (node.prune_flag_ == 1) {
         // ---------------------------------------------------------------------
-        // 节点已被剪枝 (在列生成阶段发现不可行)
+        // 节点已被剪枝
         // ---------------------------------------------------------------------
-        tree_search_flag = 1;  // 搜索其他节点
+        need_search = 1;
     }
     else {
-        if (node_int_flag == 0) {
+        if (is_integer == 0) {
             // -----------------------------------------------------------------
             // 存在非整数解, 记录分支变量信息
             // -----------------------------------------------------------------
-            // 将分支变量索引添加到历史列表
-            int var_idx = this_node.var_to_branch_idx;
-            this_node.branched_idx_list.push_back(var_idx);
+            int var_id = node.branch_var_id_;
+            node.branched_var_ids_.push_back(var_id);
 
-            // 将分支变量的原始解值添加到历史列表
-            double var_val = this_node.var_to_branch_soln;
-            this_node.branched_solns_ist.push_back(var_val);
+            double var_val = node.branch_var_val_;
+            node.branched_vals_.push_back(var_val);
 
-            tree_search_flag = 0;  // 继续分支
+            need_search = 0;
         }
 
-        if (node_int_flag == 1) {
+        if (is_integer == 1) {
             // -----------------------------------------------------------------
             // 所有非零解均为整数
             // -----------------------------------------------------------------
 
-            if (this_node.index == 1) {
+            if (node.id_ == 1) {
                 // --------- 根节点即为整数解 ---------
-                // 直接更新最优下界
-                Values.optimal_LB = this_node.LB;
+                params.best_obj_ = node.lower_bound_;
                 cout << "[分支] 根节点解全为整数, 最优下界 = "
-                     << fixed << setprecision(4) << Values.optimal_LB << "\n";
+                     << fixed << setprecision(4) << params.best_obj_ << "\n";
                 cout.unsetf(ios::fixed);
             }
 
-            if (this_node.index > 1) {
+            if (node.id_ > 1) {
                 // --------- 非根节点 ---------
-                if (Values.optimal_LB == -1) {
-                    // 首个整数解节点
-                    Values.optimal_LB = this_node.LB;
+                if (params.best_obj_ == -1) {
+                    params.best_obj_ = node.lower_bound_;
                     cout << "[分支] 找到首个整数解, 最优下界 = "
-                         << fixed << setprecision(4) << Values.optimal_LB << "\n";
+                         << fixed << setprecision(4) << params.best_obj_ << "\n";
                     cout.unsetf(ios::fixed);
                 }
                 else {
-                    // 已有整数解, 比较并更新
-                    if (this_node.LB < Values.optimal_LB) {
-                        // 找到更优的整数解
-                        Values.optimal_LB = this_node.LB;
+                    if (node.lower_bound_ < params.best_obj_) {
+                        params.best_obj_ = node.lower_bound_;
                         cout << "[分支] 找到更优整数解, 最优下界 = "
-                             << fixed << setprecision(4) << Values.optimal_LB << "\n";
+                             << fixed << setprecision(4) << params.best_obj_ << "\n";
                         cout.unsetf(ios::fixed);
                     }
-                    if (this_node.LB >= Values.optimal_LB) {
-                        // 下界不优, 剪枝
-                        this_node.node_pruned_flag = 1;
-                        cout << "[分支] 节点_" << this_node.index
-                             << " 下界不优 (LB=" << fixed << setprecision(4) << this_node.LB
-                             << " >= " << Values.optimal_LB << "), 需剪枝\n";
+                    if (node.lower_bound_ >= params.best_obj_) {
+                        node.prune_flag_ = 1;
+                        cout << "[分支] 节点_" << node.id_
+                             << " 下界不优 (LB=" << fixed << setprecision(4) << node.lower_bound_
+                             << " >= " << params.best_obj_ << "), 需剪枝\n";
                         cout.unsetf(ios::fixed);
                     }
                 }
             }
 
-            tree_search_flag = 1;  // 搜索其他节点
+            need_search = 1;
         }
     }
 
     // =========================================================================
     // 清理临时列表
     // =========================================================================
-    // 这些列表在启发式阶段使用, 在分支阶段不再需要
-    Lists.occupied_stocks_list.clear();
-    Lists.occupied_items_list.clear();
-    Lists.all_strips_list.clear();
+    data.used_stocks_.clear();
+    data.assigned_items_.clear();
+    data.strips_.clear();
 
-    return tree_search_flag;
+    return need_search;
 }
 
 
 // =============================================================================
-// ChooseVarToBranch - 选择分支变量
+// SelectBranchVar - 选择分支变量
 // =============================================================================
-//
-// 功能: 遍历所有正值变量, 找到第一个非整数变量作为分支变量
-//
-// 分支变量选择策略:
-//   - First Fractional: 选择第一个遇到的非整数变量
-//   - 这是最简单的策略, 实现简单但可能不是最高效的
-//   - 更高级的策略包括:
-//     * Most Fractional: 选择小数部分最接近 0.5 的变量
-//     * Strong Branching: 评估每个变量分支后的效果
-//     * Reliability Branching: 结合历史信息选择
-//
-// 整数性判断:
-//   - 使用直接转换 int(soln_val) != soln_val 判断
-//   - 注意: 可能存在浮点精度问题
-//   - 更鲁棒的方法: fabs(soln_val - round(soln_val)) > TOLERANCE
-//
-// 参数:
-//   Values    - 全局参数 (未使用, 保留接口一致性)
-//   Lists     - 全局列表 (未使用)
-//   this_node - 当前节点
-//               输入: all_solns_val_list (所有变量的解)
-//               输出: var_to_branch_* 系列字段
-//
-// 返回值:
-//   0 = 存在非整数解 (已记录分支变量信息)
-//   1 = 全为整数解
-//
-// =============================================================================
-int ChooseVarToBranch(All_Values& Values, All_Lists& Lists, Node& this_node) {
+int SelectBranchVar(ProblemParams& params, ProblemData& data, BPNode& node) {
 
-    int node_int_flag = 1;  // 假设全为整数
-    double soln_val;
+    int is_integer = 1;
+    double sol_val;
 
     // =========================================================================
     // 遍历所有变量寻找非整数解
     // =========================================================================
-    int all_solns_num = this_node.all_solns_val_list.size();
+    int num_sols = node.solution_.size();
 
-    for (int col = 0; col < all_solns_num; col++) {
-        soln_val = this_node.all_solns_val_list[col];
+    for (int col = 0; col < num_sols; col++) {
+        sol_val = node.solution_[col];
 
-        // 只检查正值变量 (零值变量无需分支)
-        if (soln_val > 0) {
-            // 检查整数性
-            int soln_int_val = int(soln_val);
+        if (sol_val > 0) {
+            int int_val = int(sol_val);
 
-            if (soln_int_val != soln_val) {
+            if (int_val != sol_val) {
                 // ---------------------------------------------------------
                 // 找到非整数变量
                 // ---------------------------------------------------------
-                cout << "[分支] 节点_" << this_node.index
+                cout << "[分支] 节点_" << node.id_
                      << " 变量_" << col + 1
-                     << " = " << fixed << setprecision(4) << soln_val
+                     << " = " << fixed << setprecision(4) << sol_val
                      << " 非整数\n";
                 cout.unsetf(ios::fixed);
 
-                // 记录分支变量信息
-                this_node.var_to_branch_idx = col;           // 变量索引
-                this_node.var_to_branch_soln = soln_val;     // 原始解值
-                this_node.var_to_branch_floor = floor(soln_val);  // 向下取整
-                this_node.var_to_branch_ceil = ceil(soln_val);    // 向上取整
+                node.branch_var_id_ = col;
+                node.branch_var_val_ = sol_val;
+                node.branch_floor_ = floor(sol_val);
+                node.branch_ceil_ = ceil(sol_val);
 
-                node_int_flag = 0;  // 标记存在非整数解
-                break;              // 找到第一个即停止 (First Fractional)
+                is_integer = 0;
+                break;
             }
         }
     }
 
-    return node_int_flag;
+    return is_integer;
 }
