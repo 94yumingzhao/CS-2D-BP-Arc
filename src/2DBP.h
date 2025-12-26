@@ -70,10 +70,13 @@ using namespace std;
 // 检验数容差 (Reduced Cost Tolerance)
 constexpr double kRcTolerance = 1.0e-6;
 
+// 零值容差 (用于浮点数归零判断)
+constexpr double kZeroTolerance = 1.0e-10;
+
 // 最大迭代次数
 constexpr int kMaxCgIter = 100;
 
-// 最大节点数
+// 最大分支定价节点数 (可根据问题规模调整)
 constexpr int kMaxBpNodes = 30;
 
 

@@ -50,9 +50,17 @@ using namespace std;
 // -----------------------------------------------------------------------------
 void ExportResults(ProblemParams& params, ProblemData& data) {
 
-    int num_stocks = data.used_stocks_.size();
-    int num_items = data.assigned_items_.size();
-    int num_strips = data.strips_.size();
+    int num_stocks = static_cast<int>(data.used_stocks_.size());
+    int num_items = static_cast<int>(data.assigned_items_.size());
+    int num_strips = static_cast<int>(data.strips_.size());
+
+    // =========================================================================
+    // 边界检查: 确保有数据可输出
+    // =========================================================================
+    if (num_stocks == 0) {
+        cout << "[结果] 无切割方案可输出 (已使用母板数为0)\n";
+        return;
+    }
 
     // =========================================================================
     // 控制台输出: 切割方案摘要
@@ -60,8 +68,8 @@ void ExportResults(ProblemParams& params, ProblemData& data) {
     cout << "[结果] 切割方案输出 (母板数: " << num_stocks << ")\n";
 
     for (int pos = 0; pos < num_stocks; pos++) {
-        int stock_len = data.used_stocks_[0].length_;
-        int stock_wid = data.used_stocks_[0].width_;
+        int stock_len = data.used_stocks_[pos].length_;
+        int stock_wid = data.used_stocks_[pos].width_;
 
         // ----- 统计当前母板上的条带和子件数量 -----
         int strip_count = 0;
@@ -92,8 +100,13 @@ void ExportResults(ProblemParams& params, ProblemData& data) {
         out_str = s_out.str();
         f_out.open(out_str, ios::out);
 
-        int stock_len = data.used_stocks_[0].length_;
-        int stock_wid = data.used_stocks_[0].width_;
+        if (!f_out.is_open()) {
+            cerr << "[警告] 无法创建输出文件: " << out_str << "\n";
+            continue;
+        }
+
+        int stock_len = data.used_stocks_[pos].length_;
+        int stock_wid = data.used_stocks_[pos].width_;
 
         // =====================================================================
         // 输出母板边界 (标识符: x)

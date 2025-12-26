@@ -66,14 +66,14 @@ void LoadInput(ProblemParams& params, ProblemData& data) {
         // ---------------------------------------------------------------------
         getline(fin, line);
         SplitString(line, tokens, "\t");
-        params.num_stocks_ = atoi(tokens[0].c_str());
+        params.num_stocks_ = std::stoi(tokens[0]);
 
         // ---------------------------------------------------------------------
         // 读取第 2 行: 子件类型数量
         // ---------------------------------------------------------------------
         getline(fin, line);
         SplitString(line, tokens, "\t");
-        params.num_item_types_ = atoi(tokens[0].c_str());
+        params.num_item_types_ = std::stoi(tokens[0]);
 
         // 条带类型数 = 子件类型数
         params.num_strip_types_ = params.num_item_types_;
@@ -83,8 +83,8 @@ void LoadInput(ProblemParams& params, ProblemData& data) {
         // ---------------------------------------------------------------------
         getline(fin, line);
         SplitString(line, tokens, "\t");
-        params.stock_length_ = atoi(tokens[0].c_str());
-        params.stock_width_ = atoi(tokens[1].c_str());
+        params.stock_length_ = std::stoi(tokens[0]);
+        params.stock_width_ = std::stoi(tokens[1]);
 
         cout << "[数据] 母板尺寸: " << params.stock_length_ << " x " << params.stock_width_ << "\n";
         cout << "[数据] 母板数量: " << params.num_stocks_ << "\n";
@@ -93,6 +93,7 @@ void LoadInput(ProblemParams& params, ProblemData& data) {
         // ---------------------------------------------------------------------
         // 初始化母板列表
         // ---------------------------------------------------------------------
+        data.stocks_.reserve(params.num_stocks_);
         for (int i = 0; i < params.num_stocks_; i++) {
             Stock stock;
             stock.length_ = params.stock_length_;
@@ -101,7 +102,7 @@ void LoadInput(ProblemParams& params, ProblemData& data) {
             stock.x_ = 0;
             stock.y_ = 0;
 
-            data.stocks_.insert(data.stocks_.begin(), stock);
+            data.stocks_.push_back(stock);
         }
 
         // ---------------------------------------------------------------------
@@ -115,8 +116,13 @@ void LoadInput(ProblemParams& params, ProblemData& data) {
             getline(fin, line);
             SplitString(line, tokens, "\t");
 
-            int type_demand = atoi(tokens[2].c_str());
+            int type_demand = std::stoi(tokens[2]);
             total_demand += type_demand;
+
+            // 预解析常用值避免重复转换
+            int parsed_type_id = std::stoi(tokens[3]);
+            int parsed_length = std::stoi(tokens[0]);
+            int parsed_width = std::stoi(tokens[1]);
 
             // -----------------------------------------------------------------
             // 按需求量展开为独立子件实例
@@ -124,11 +130,11 @@ void LoadInput(ProblemParams& params, ProblemData& data) {
             for (int k = 0; k < type_demand; k++) {
                 Item item;
 
-                item.type_id_ = atoi(tokens[3].c_str());
+                item.type_id_ = parsed_type_id;
                 item.id_ = item_id;
-                item.demand_ = atoi(tokens[2].c_str());
-                item.length_ = atoi(tokens[0].c_str());
-                item.width_ = atoi(tokens[1].c_str());
+                item.demand_ = type_demand;
+                item.length_ = parsed_length;
+                item.width_ = parsed_width;
                 item.area_ = item.length_ * item.width_;
 
                 item.x_ = -1;
@@ -146,10 +152,10 @@ void LoadInput(ProblemParams& params, ProblemData& data) {
             // 创建子件类型记录
             // -----------------------------------------------------------------
             ItemType item_type;
-            item_type.type_id_ = atoi(tokens[3].c_str());
-            item_type.demand_ = atoi(tokens[2].c_str());
-            item_type.width_ = atoi(tokens[1].c_str());
-            item_type.length_ = atoi(tokens[0].c_str());
+            item_type.type_id_ = parsed_type_id;
+            item_type.demand_ = type_demand;
+            item_type.width_ = parsed_width;
+            item_type.length_ = parsed_length;
 
             data.item_types_.push_back(item_type);
         }
@@ -159,24 +165,18 @@ void LoadInput(ProblemParams& params, ProblemData& data) {
         fin.close();
 
     } else {
-        cout << "[错误] 无法打开文件: " << file_path << "\n";
+        cerr << "[错误] 无法打开文件: " << file_path << "\n";
+        cerr << "[错误] 程序终止\n";
+        exit(1);
     }
 
     // =========================================================================
     // 按宽度降序排序所有子件
     // =========================================================================
-    Item temp_item;
-    int num_items = data.items_.size();
-
-    for (int i = 0; i < num_items - 1; i++) {
-        for (int j = i + 1; j < num_items; j++) {
-            if (data.items_[i].width_ < data.items_[j].width_) {
-                temp_item = data.items_[i];
-                data.items_[i] = data.items_[j];
-                data.items_[j] = temp_item;
-            }
-        }
-    }
+    std::sort(data.items_.begin(), data.items_.end(),
+        [](const Item& a, const Item& b) {
+            return a.width_ > b.width_;
+        });
 
     cout << "[数据] 数据读取完成, 子件已按宽度降序排序\n";
 }

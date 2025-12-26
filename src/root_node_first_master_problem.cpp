@@ -142,16 +142,17 @@ bool SolveRootInitMP(
 
         for (int row = 0; row < num_strip_types; row++) {
             double dual_val = mp_cplex.getDual(mp_cons[row]);
-            if (dual_val == -0) dual_val = 0;
+            if (std::abs(dual_val) < kZeroTolerance) dual_val = 0;
             root_node.duals_.push_back(dual_val);
         }
 
         for (int row = num_strip_types; row < num_strip_types + num_item_types; row++) {
             double dual_val = mp_cplex.getDual(mp_cons[row]);
-            if (dual_val == -0) dual_val = 0;
+            if (std::abs(dual_val) < kZeroTolerance) dual_val = 0;
             root_node.duals_.push_back(dual_val);
         }
     }
 
+    mp_cplex.end();
     return mp_feasible;
 }

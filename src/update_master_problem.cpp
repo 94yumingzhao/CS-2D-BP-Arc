@@ -117,15 +117,17 @@ void UpdateMP(
 
     for (int row = 0; row < num_strip_types; row++) {
         double dual_val = mp_cplex.getDual(mp_cons[row]);
-        if (dual_val == -0) dual_val = 0;
+        if (std::abs(dual_val) < kZeroTolerance) dual_val = 0;
         node.duals_.push_back(dual_val);
     }
 
     for (int row = num_strip_types; row < num_strip_types + num_item_types; row++) {
         double dual_val = mp_cplex.getDual(mp_cons[row]);
-        if (dual_val == -0) dual_val = 0;
+        if (std::abs(dual_val) < kZeroTolerance) dual_val = 0;
         node.duals_.push_back(dual_val);
     }
+
+    mp_cplex.end();
 }
 
 
@@ -171,7 +173,7 @@ void SolveFinalMP(
     // =========================================================================
     for (int col = 0; col < num_cols; col++) {
         IloNum sol_val = mp_cplex.getValue(mp_vars[col]);
-        if (sol_val == -0) sol_val = 0;
+        if (std::abs(sol_val) < kZeroTolerance) sol_val = 0;
         node.solution_.push_back(sol_val);
     }
 
@@ -193,4 +195,6 @@ void SolveFinalMP(
 
     cout << "[主问题] 非零解: Y=" << num_y_nonzero << ", X=" << num_x_nonzero
          << " (总变量: " << num_cols << ")\n";
+
+    mp_cplex.end();
 }

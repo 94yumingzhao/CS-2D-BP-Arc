@@ -88,7 +88,7 @@ int SolveSP1(ProblemParams& params, ProblemData& data, BPNode& node) {
 
         for (int j = 0; j < num_strip_types; j++) {
             double sol_val = sp1_cplex.getValue(g_vars[j]);
-            if (sol_val == -0) sol_val = 0;
+            if (std::abs(sol_val) < kZeroTolerance) sol_val = 0;
             node.new_y_col_.push_back(sol_val);
         }
 
@@ -142,7 +142,7 @@ int SolveSP1(ProblemParams& params, ProblemData& data, BPNode& node) {
 
                         for (int i = 0; i < num_item_types; i++) {
                             double sol_val = node.sp2_solution_[i];
-                            if (sol_val == -0) sol_val = 0;
+                            if (std::abs(sol_val) < kZeroTolerance) sol_val = 0;
                             temp_col.push_back(sol_val);
                         }
 
@@ -293,7 +293,7 @@ int SolveSP2(ProblemParams& params, ProblemData& data, BPNode& node, int strip_t
                     is_feasible = 1;
 
                     double sol_val = sp2_cplex.getValue(d_vars[i]);
-                    if (sol_val == -0) sol_val = 0;
+                    if (std::abs(sol_val) < kZeroTolerance) sol_val = 0;
                     node.sp2_solution_.push_back(sol_val);
                     break;
                 }

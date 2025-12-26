@@ -259,7 +259,7 @@ bool SolveNodeInitMP(
         double dual_val = -1;
         for (int row = 0; row < num_strip_types; row++) {
             dual_val = mp_cplex.getDual(mp_cons[row]);
-            if (dual_val == -0) {
+            if (std::abs(dual_val) < kZeroTolerance) {
                 dual_val = 0;
             }
             cur_node.duals_.push_back(dual_val);
@@ -267,7 +267,7 @@ bool SolveNodeInitMP(
 
         for (int row = num_strip_types; row < num_strip_types + num_item_types; row++) {
             dual_val = mp_cplex.getDual(mp_cons[row]);
-            if (dual_val == -0) {
+            if (std::abs(dual_val) < kZeroTolerance) {
                 dual_val = 0;
             }
             cur_node.duals_.push_back(dual_val);
