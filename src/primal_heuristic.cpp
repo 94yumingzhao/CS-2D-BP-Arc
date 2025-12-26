@@ -4,19 +4,59 @@
 //
 // 功能: 使用贪心启发式生成初始可行解和模型矩阵
 //
-// 算法思路:
-//   1. 按宽度优先的两阶段切割策略
-//   2. 逐个母板进行切割, 直到所有子件需求满足
-//   3. 每个条带由其第一个子件的宽度决定类型
-//   4. 在条带内贪心放置可行的子件
+// 算法概述:
+//   采用两阶段切割的贪心策略, 逐个母板进行切割, 直到所有子件需求满足。
+//   生成的切割模式用于构建列生成的初始受限主问题 (RMP)。
+//
+// 两阶段切割过程:
+//
+//   第一阶段: 母板 -> 条带
+//   ┌────────────────────────────────────┐
+//   │              母板                  │
+//   │  ┌──────────────────────────────┐  │
+//   │  │         条带 1 (宽度=w1)     │  │  <- 由首个子件宽度决定
+//   │  ├──────────────────────────────┤  │
+//   │  │         条带 2 (宽度=w2)     │  │
+//   │  ├──────────────────────────────┤  │
+//   │  │         条带 3 (宽度=w3)     │  │
+//   │  ├──────────────────────────────┤  │
+//   │  │         (剩余废料)           │  │
+//   │  └──────────────────────────────┘  │
+//   └────────────────────────────────────┘
+//
+//   第二阶段: 条带 -> 子件
+//   ┌──────────────────────────────────────────────────────────┐
+//   │                        条带                              │
+//   │  ┌────────┐┌────────┐┌────────┐┌────────┐               │
+//   │  │ 子件1  ││ 子件2  ││ 子件3  ││ 子件4  │  (废料)       │
+//   │  └────────┘└────────┘└────────┘└────────┘               │
+//   └──────────────────────────────────────────────────────────┘
+//
+// 贪心策略:
+//   1. 按宽度优先选择子件作为条带的第一个子件
+//   2. 条带宽度由第一个子件的宽度确定
+//   3. 在条带内按长度方向依次放置可行子件
+//   4. 当母板剩余空间不足时, 开启新母板
 //
 // 主问题矩阵结构:
-//   ┌─────────────────┬─────────────────┐
-//   │        C        │        D        │  条带约束 >= 0
-//   ├─────────────────┼─────────────────┤
-//   │        0        │        B        │  子件约束 >= demand
-//   └─────────────────┴─────────────────┘
-//      Y列(母板模式)      X列(条带模式)
+//
+//   ┌─────────────────────────────────────────────────────────────────┐
+//   │                        模式列                                   │
+//   │     Y 列 (母板模式)      │      X 列 (条带模式)                 │
+//   │    k = 1, 2, ..., K      │     p = 1, 2, ..., P                 │
+//   ├──────────────────────────┼──────────────────────────────────────┤
+//   │                          │                                      │
+//   │     C 矩阵 (J x K)       │      D 矩阵 (J x P)                  │  条带
+//   │   c[j,k] = 模式k产出     │    d[j,p] = -1 (若模式p属于         │  约束
+//   │           条带j的数量    │              条带类型j)              │  >= 0
+//   │                          │                                      │
+//   ├──────────────────────────┼──────────────────────────────────────┤
+//   │                          │                                      │
+//   │     0 矩阵 (N x K)       │      B 矩阵 (N x P)                  │  子件
+//   │     (全零)               │    b[i,p] = 模式p产出                │  约束
+//   │                          │             子件i的数量              │  >= d
+//   │                          │                                      │
+//   └──────────────────────────┴──────────────────────────────────────┘
 //
 // =============================================================================
 
@@ -27,30 +67,46 @@ using namespace std;
 // -----------------------------------------------------------------------------
 // PrimalHeuristic - 原始启发式生成初始解
 // -----------------------------------------------------------------------------
-// 功能: 使用两阶段切割启发式生成初始可行解, 构建模型矩阵
+// 功能: 使用两阶段切割启发式生成初始可行解, 同时构建模型矩阵
+//
+// 执行流程:
+//   1. 初始化: 清空已占用子件列表, 重置完成标志
+//   2. 主循环: 逐个母板进行切割
+//      2.1 在母板上创建条带
+//      2.2 在条带内放置子件
+//      2.3 判断模式是否为新模式
+//      2.4 计算切割损耗
+//   3. 构建模型矩阵: 根据生成的模式构建 C, D, 0, B 矩阵
+//
 // 参数:
-//   Values    - 全局参数
-//   Lists     - 全局列表
+//   Values    - 全局参数 (包含母板尺寸等)
+//   Lists     - 全局列表 (包含子件列表等)
 //   root_node - 根节点, 用于存储生成的模式和矩阵
 // -----------------------------------------------------------------------------
 void PrimalHeuristic(All_Values& Values, All_Lists& Lists, Node& root_node) {
+
 	int item_types_num = Values.item_types_num;
 	int strip_types_num = Values.strip_types_num;
 
+	// =========================================================================
+	// 初始化
+	// =========================================================================
 	Values.Finish = false;
 	Lists.occupied_items_list.clear();
 
-	int stock_index = 0;
-	int stock_pattern = 0;
-	int strip_index = 0;
-	int strip_pattern = 0;
+	int stock_index = 0;    // 母板索引计数器
+	int stock_pattern = 0;  // 母板模式计数器
+	int strip_index = 0;    // 条带索引计数器
+	int strip_pattern = 0;  // 条带模式计数器
 
 	// =========================================================================
 	// 主循环: 逐个母板进行切割
 	// =========================================================================
+	// 终止条件: 所有子件都已分配 (Values.Finish = true)
+	// =========================================================================
 	while (Values.Finish == false) {
 
-		// 从母板列表取出一块母板
+		// ----- 从母板列表取出一块母板 -----
 		Lists.all_stocks_list.erase(Lists.all_stocks_list.begin());
 
 		// ----- 初始化当前母板 -----
@@ -69,7 +125,7 @@ void PrimalHeuristic(All_Values& Values, All_Lists& Lists, Node& root_node) {
 			new_stock.strip_types_list.push_back(this_strip_type);
 		}
 
-		// 记录母板剩余可用区域
+		// ----- 记录母板剩余可用区域 -----
 		One_Item stock_remain;
 		stock_remain.length = new_stock.length;
 		stock_remain.width = new_stock.width;
@@ -83,13 +139,16 @@ void PrimalHeuristic(All_Values& Values, All_Lists& Lists, Node& root_node) {
 		// 内循环: 在当前母板上切割条带
 		// =====================================================================
 		int all_items_num = Lists.all_items_list.size();
+
 		for (int j = 0; j < all_items_num; j++) {
-			// 检查子件 j 是否可以放入剩余区域
+			// ----- 检查子件 j 是否可以放入剩余区域 -----
 			if (Lists.all_items_list[j].length <= stock_remain.length
 				&& Lists.all_items_list[j].width <= stock_remain.width
 				&& Lists.all_items_list[j].occupied_flag == 0) {
 
-				// ----- 创建条带的第一个子件 -----
+				// =============================================================
+				// 创建条带的第一个子件
+				// =============================================================
 				One_Item first_item;
 				Lists.all_items_list[j].occupied_flag = 1;
 
@@ -107,12 +166,17 @@ void PrimalHeuristic(All_Values& Values, All_Lists& Lists, Node& root_node) {
 
 				Lists.occupied_items_list.push_back(first_item);
 
-				// ----- 初始化新条带 -----
+				// =============================================================
+				// 初始化新条带
+				// =============================================================
+				// 条带宽度 = 第一个子件的宽度
+				// 条带长度 = 母板长度 (两阶段切割特性)
+				// =============================================================
 				One_Strip new_strip;
 				new_strip.strip_idx = strip_index;
 				new_strip.strip_type_idx = first_item.item_type_idx;
-				new_strip.length = stock_remain.length;  // 条带长度 = 母板长度
-				new_strip.width = first_item.width;      // 条带宽度 = 首个子件宽度
+				new_strip.length = stock_remain.length;
+				new_strip.width = first_item.width;
 				new_strip.area = new_strip.length * new_strip.width;
 				new_strip.pos_x = first_item.pos_x;
 				new_strip.pos_y = first_item.pos_y;
@@ -129,7 +193,9 @@ void PrimalHeuristic(All_Values& Values, All_Lists& Lists, Node& root_node) {
 				int type_pos = first_item.item_type_idx - 1;
 				new_strip.item_types_list[type_pos].this_item_type_num++;
 
-				// ----- 计算第一个子件右侧剩余区域 -----
+				// =============================================================
+				// 计算第一个子件右侧的剩余区域
+				// =============================================================
 				One_Item first_item_right_side;
 				first_item_right_side.length = stock_remain.length - first_item.length;
 				first_item_right_side.width = first_item.width;
@@ -140,7 +206,9 @@ void PrimalHeuristic(All_Values& Values, All_Lists& Lists, Node& root_node) {
 				first_item_right_side.item_type_idx = -1;
 				first_item_right_side.occupied_flag = 0;
 
-				// ----- 在条带内继续放置子件 -----
+				// =============================================================
+				// 在条带内继续放置子件 (贪心填充)
+				// =============================================================
 				for (int m = 0; m < all_items_num; m++) {
 					if (Lists.all_items_list[m].length <= first_item_right_side.length
 						&& Lists.all_items_list[m].width <= first_item_right_side.width
@@ -167,13 +235,17 @@ void PrimalHeuristic(All_Values& Values, All_Lists& Lists, Node& root_node) {
 						int itm_pos = new_item.item_type_idx - 1;
 						new_strip.item_types_list[itm_pos].this_item_type_num++;
 
-						// 更新剩余区域
+						// 更新剩余区域 (向右移动)
 						first_item_right_side.length = first_item_right_side.length - new_item.length;
 						first_item_right_side.pos_x = first_item_right_side.pos_x + new_item.length;
 					}
 				}
 
-				// ----- 判断条带模式是否为新模式 -----
+				// =============================================================
+				// 判断条带模式是否为新模式
+				// =============================================================
+				// 模式由条带内各子件类型的数量唯一确定
+				// =============================================================
 				int Strip_Final_Cnt = 0;
 				int all_strips_num = Lists.all_strips_list.size();
 
@@ -216,7 +288,7 @@ void PrimalHeuristic(All_Values& Values, All_Lists& Lists, Node& root_node) {
 				int stp_pos = new_strip.strip_type_idx - 1;
 				new_stock.strip_types_list[stp_pos].this_strip_type_num++;
 
-				// ----- 更新母板剩余区域 (向下移动) -----
+				// ----- 更新母板剩余区域 (向上移动) -----
 				stock_remain.length = stock_remain.length;
 				stock_remain.width = stock_remain.width - first_item.width;
 				stock_remain.area = stock_remain.length * stock_remain.width;
@@ -236,7 +308,7 @@ void PrimalHeuristic(All_Values& Values, All_Lists& Lists, Node& root_node) {
 		}
 
 		// =====================================================================
-		// 计算母板的切割成本
+		// 计算母板的切割损耗
 		// =====================================================================
 		int strip_total_cut_distance = 0;
 		int strips_num_in_stock = new_stock.strips_list.size();
@@ -277,6 +349,7 @@ void PrimalHeuristic(All_Values& Values, All_Lists& Lists, Node& root_node) {
 		// 计算母板的废料面积
 		// =====================================================================
 		int strip_total_waste_area = 0;
+
 		for (int j = 0; j < strips_num_in_stock; j++) {
 			One_Strip this_strip = new_stock.strips_list[j];
 			int item_total_used_area = 0;
@@ -296,6 +369,8 @@ void PrimalHeuristic(All_Values& Values, All_Lists& Lists, Node& root_node) {
 
 		// =====================================================================
 		// 判断母板模式是否为新模式
+		// =====================================================================
+		// 模式由母板内各条带类型的数量唯一确定
 		// =====================================================================
 		int Stock_Final_Cnt = 0;
 		int occupied_stocks_num = Lists.occupied_stocks_list.size();
@@ -343,18 +418,20 @@ void PrimalHeuristic(All_Values& Values, All_Lists& Lists, Node& root_node) {
 	// 构建模型矩阵
 	// =========================================================================
 	//
-	// 矩阵结构:
-	//   ┌─────────────────┬─────────────────┐
-	//   │     C (J x K)   │     D (J x P)   │  条带约束
-	//   ├─────────────────┼─────────────────┤
-	//   │     0 (N x K)   │     B (N x P)   │  子件约束
-	//   └─────────────────┴─────────────────┘
+	// 矩阵结构示意:
 	//
-	// C: 母板模式中各条带类型的产出数量
-	// D: 条带模式对应的条带类型 (-1 表示属于该类型)
-	// 0: 零矩阵
-	// B: 条带模式中各子件类型的产出数量
-
+	//   列索引:    0   1   ...  K-1  K   K+1  ...  K+P-1
+	//             ─────────────────┬─────────────────────
+	//   行 0~J-1:  C 矩阵 (条带产出) │  D 矩阵 (条带消耗)
+	//             ─────────────────┼─────────────────────
+	//   行 J~J+N-1: 0 矩阵 (全零)    │  B 矩阵 (子件产出)
+	//
+	// 含义:
+	//   C[j,k]: 母板模式 k 产出条带类型 j 的数量
+	//   D[j,p]: 条带模式 p 属于条带类型 j 则为 -1, 否则为 0
+	//   B[i,p]: 条带模式 p 产出子件类型 i 的数量
+	//
+	// =========================================================================
 	int K_num = root_node.Y_patterns_list.size();  // 母板模式数
 	int P_num = root_node.X_patterns_list.size();  // 条带模式数
 	int J_num = strip_types_num;                   // 条带类型数
@@ -366,23 +443,23 @@ void PrimalHeuristic(All_Values& Values, All_Lists& Lists, Node& root_node) {
 
 		for (int row = 0; row < J_num + N_num; row++) {
 			if (col < K_num) {
-				// 矩阵 C 和 矩阵 0
+				// ===== Y 列 (母板模式) =====
 				if (row < J_num) {
-					// 矩阵 C: 条带类型产出
+					// C 矩阵: 条带类型产出数量
 					double val = root_node.Y_patterns_list[col].strip_types_list[row].this_strip_type_num;
 					temp_col.push_back(val);
 				}
 				if (row >= J_num) {
-					// 矩阵 0: 零值
+					// 0 矩阵: 零值
 					double val = 0;
 					temp_col.push_back(val);
 				}
 			}
 
 			if (col >= K_num) {
-				// 矩阵 D 和 矩阵 B
+				// ===== X 列 (条带模式) =====
 				if (row < J_num) {
-					// 矩阵 D: 条带类型对应关系
+					// D 矩阵: 条带类型对应关系
 					int col_pos = col - K_num;
 					int item_type_idx = row + 1;
 					int strip_type_idx = root_node.X_patterns_list[col_pos].strip_type_idx;
@@ -396,7 +473,7 @@ void PrimalHeuristic(All_Values& Values, All_Lists& Lists, Node& root_node) {
 					}
 				}
 				if (row >= J_num) {
-					// 矩阵 B: 子件类型产出
+					// B 矩阵: 子件类型产出数量
 					int col_pos = col - K_num;
 					int row_pos = row - J_num;
 					double val = root_node.X_patterns_list[col_pos].item_types_list[row_pos].this_item_type_num;
@@ -414,12 +491,12 @@ void PrimalHeuristic(All_Values& Values, All_Lists& Lists, Node& root_node) {
 
 		for (int row = 0; row < J_num + N_num; row++) {
 			if (row < J_num) {
-				// 矩阵 C 部分
+				// C 矩阵部分
 				double val = root_node.Y_patterns_list[col].strip_types_list[row].this_strip_type_num;
 				temp_col.push_back(val);
 			}
 			if (row >= J_num) {
-				// 矩阵 0 部分
+				// 0 矩阵部分
 				double val = 0;
 				temp_col.push_back(val);
 			}
@@ -434,7 +511,7 @@ void PrimalHeuristic(All_Values& Values, All_Lists& Lists, Node& root_node) {
 
 		for (int row = 0; row < J_num + N_num; row++) {
 			if (row < J_num) {
-				// 矩阵 D 部分
+				// D 矩阵部分
 				int col_pos = col - K_num;
 				int item_type_index = row + 1;
 				int strip_type_index = root_node.X_patterns_list[col_pos].strip_type_idx;
@@ -448,7 +525,7 @@ void PrimalHeuristic(All_Values& Values, All_Lists& Lists, Node& root_node) {
 				}
 			}
 			if (row >= J_num) {
-				// 矩阵 B 部分
+				// B 矩阵部分
 				int col_pos = col - K_num;
 				int row_pos = row - J_num;
 				double val = root_node.X_patterns_list[col_pos].item_types_list[row_pos].this_item_type_num;

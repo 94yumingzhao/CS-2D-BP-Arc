@@ -1,73 +1,183 @@
 // =============================================================================
 // root_node_column_generation.cpp - 根节点列生成
 // =============================================================================
+//
+// 功能: 在根节点执行完整的列生成求解过程
+//
+// -----------------------------------------------------------------------------
+// 列生成算法概述
+// -----------------------------------------------------------------------------
+//
+// 列生成 (Column Generation) 是求解大规模线性规划的经典方法:
+//   - 不显式枚举所有变量 (列), 而是按需生成
+//   - 主问题 (RMP): 仅包含部分列的受限主问题
+//   - 子问题 (SP): 寻找能够改进当前解的新列 (定价问题)
+//
+// 迭代流程:
+//
+//   +-------------------+
+//   | 求解受限主问题 MP |
+//   +--------+----------+
+//            |
+//            v
+//   +--------+----------+
+//   | 提取对偶价格      |
+//   +--------+----------+
+//            |
+//            v
+//   +--------+----------+
+//   | 求解子问题 SP     |
+//   +--------+----------+
+//            |
+//      +-----+-----+
+//      |           |
+//   有改进列    无改进列
+//      |           |
+//      v           v
+//   +--+--+    +---+---+
+//   |添加 |    |收敛   |
+//   |新列 |    +-------+
+//   +--+--+
+//      |
+//      +---> 返回求解主问题
+//
+// 收敛条件:
+//   - 当所有子问题都找不到改进列时, 列生成收敛
+//   - 此时主问题的解是 LP 松弛的最优解
+//
+// =============================================================================
 
 #include "2DBP.h"
 
 using namespace std;
 
-// -----------------------------------------------------------------------------
+
+// =============================================================================
 // RootNodeColumnGeneration - 根节点列生成主循环
-// -----------------------------------------------------------------------------
+// =============================================================================
+//
+// 算法流程:
+//   1. 初始化 CPLEX 环境和模型对象
+//   2. 构建并求解初始主问题 (使用启发式生成的列)
+//   3. 进入列生成循环:
+//      a. 增加迭代计数
+//      b. 检查是否达到最大迭代次数
+//      c. 求解子问题 (SP1 和 SP2)
+//      d. 若找到改进列, 添加到主问题并重新求解
+//      e. 若无改进列, 列生成收敛, 退出循环
+//   4. 求解最终主问题, 提取完整解
+//   5. 释放 CPLEX 资源
+//
+// 参数:
+//   Values    - 全局参数
+//   Lists     - 全局列表
+//   root_node - 输入/输出: 根节点
+//               输入: 初始模型矩阵 (来自启发式)
+//               输出: 最优解, 对偶价格, 扩展的列集合
+//
+// =============================================================================
 void RootNodeColumnGeneration(All_Values& Values, All_Lists& Lists, Node& root_node) {
 
-	cout << "[列生成] 根节点列生成开始\n";
+    cout << "[列生成] 根节点列生成开始\n";
 
-	// 初始化 CPLEX 环境
-	IloEnv Env_MP;
-	IloModel Model_MP(Env_MP);
-	IloObjective Obj_MP = IloAdd(Model_MP, IloMinimize(Env_MP));
-	IloNumVarArray Vars_MP(Env_MP);
-	IloRangeArray Cons_MP(Env_MP);
+    // =========================================================================
+    // 初始化 CPLEX 环境和模型对象
+    // =========================================================================
+    // Env_MP: CPLEX 环境, 管理内存和资源
+    // Model_MP: 优化模型, 包含变量、约束和目标
+    // Obj_MP: 目标函数 (最小化母板使用数量)
+    // Vars_MP: 决策变量数组 (Y 和 X 变量)
+    // Cons_MP: 约束数组 (条带约束和子件约束)
 
-	root_node.iter = 0;
+    IloEnv Env_MP;
+    IloModel Model_MP(Env_MP);
+    IloObjective Obj_MP = IloAdd(Model_MP, IloMinimize(Env_MP));
+    IloNumVarArray Vars_MP(Env_MP);
+    IloRangeArray Cons_MP(Env_MP);
 
-	// 求解初始主问题
-	bool MP_flag = SolveRootNodeFirstMasterProblem(
-		Values, Lists, Env_MP, Model_MP, Obj_MP, Cons_MP, Vars_MP, root_node);
+    // 初始化迭代计数
+    root_node.iter = 0;
 
-	if (MP_flag == 1) {
-		// 初始主问题可行, 进入列生成循环
-		while (1) {
-			root_node.iter++;
+    // =========================================================================
+    // 求解初始主问题
+    // =========================================================================
+    // 使用启发式生成的初始列构建并求解主问题
+    // MP_flag: true = 可行, false = 不可行
 
-			if (root_node.iter == 100) {
-				cout << "[警告] 达到最大迭代次数 100\n";
-				break;
-			}
+    bool MP_flag = SolveRootNodeFirstMasterProblem(
+        Values, Lists, Env_MP, Model_MP, Obj_MP, Cons_MP, Vars_MP, root_node);
 
-			// 求解子问题
-			int SP_flag = SolveStageOneSubProblem(Values, Lists, root_node);
+    if (MP_flag == 1) {
+        // ---------------------------------------------------------------------
+        // 初始主问题可行, 进入列生成循环
+        // ---------------------------------------------------------------------
+        while (1) {
+            // 增加迭代计数
+            root_node.iter++;
 
-			if (SP_flag == 0) {
-				// 无改进列, 列生成收敛
-				cout << "[列生成] 收敛 (迭代 " << root_node.iter << " 次)\n";
-				break;
-			}
+            // -----------------------------------------------------------------
+            // 检查最大迭代次数
+            // -----------------------------------------------------------------
+            // 防止无限循环, 设置迭代上限
+            // TODO: 建议将 100 定义为常量
+            if (root_node.iter == 100) {
+                cout << "[警告] 达到最大迭代次数 100, 强制终止列生成\n";
+                break;
+            }
 
-			if (SP_flag == 1) {
-				// 找到改进列, 更新主问题
-				SolveUpdateMasterProblem(
-					Values, Lists, Env_MP, Model_MP, Obj_MP, Cons_MP, Vars_MP, root_node);
-			}
-		}
+            // -----------------------------------------------------------------
+            // 求解子问题
+            // -----------------------------------------------------------------
+            // SolveStageOneSubProblem 会:
+            //   1. 先求解 SP1 (宽度背包)
+            //   2. 若 SP1 无改进列, 再求解 SP2 (长度背包)
+            //   3. 若找到改进列, 存储在 this_node.new_Y_col 或 new_X_cols_list
+            //
+            // SP_flag:
+            //   0 = 无改进列 (列生成收敛)
+            //   1 = 找到改进列
 
-		// 求解最终主问题
-		SolveFinalMasterProblem(
-			Values, Lists, Env_MP, Model_MP, Obj_MP, Cons_MP, Vars_MP, root_node);
-	}
+            int SP_flag = SolveStageOneSubProblem(Values, Lists, root_node);
 
-	// 释放 CPLEX 资源
-	Obj_MP.removeAllProperties();
-	Obj_MP.end();
-	Vars_MP.clear();
-	Vars_MP.end();
-	Cons_MP.clear();
-	Cons_MP.end();
-	Model_MP.removeAllProperties();
-	Model_MP.end();
-	Env_MP.removeAllProperties();
-	Env_MP.end();
+            if (SP_flag == 0) {
+                // 无改进列, 列生成收敛
+                cout << "[列生成] 收敛 (共迭代 " << root_node.iter << " 次)\n";
+                break;
+            }
 
-	cout << "[列生成] 根节点列生成结束\n";
+            if (SP_flag == 1) {
+                // 找到改进列, 添加到主问题并重新求解
+                SolveUpdateMasterProblem(
+                    Values, Lists, Env_MP, Model_MP, Obj_MP, Cons_MP, Vars_MP, root_node);
+            }
+        }
+
+        // ---------------------------------------------------------------------
+        // 求解最终主问题
+        // ---------------------------------------------------------------------
+        // 列生成收敛后, 求解最终主问题并提取完整解
+        // 此时的解是 LP 松弛的最优解
+
+        SolveFinalMasterProblem(
+            Values, Lists, Env_MP, Model_MP, Obj_MP, Cons_MP, Vars_MP, root_node);
+    }
+
+    // =========================================================================
+    // 释放 CPLEX 资源
+    // =========================================================================
+    // 按照创建的逆序释放, 避免悬空引用
+    // 注意: 必须调用 end() 释放 CPLEX 对象占用的内存
+
+    Obj_MP.removeAllProperties();
+    Obj_MP.end();
+    Vars_MP.clear();
+    Vars_MP.end();
+    Cons_MP.clear();
+    Cons_MP.end();
+    Model_MP.removeAllProperties();
+    Model_MP.end();
+    Env_MP.removeAllProperties();
+    Env_MP.end();
+
+    cout << "[列生成] 根节点列生成结束\n";
 }

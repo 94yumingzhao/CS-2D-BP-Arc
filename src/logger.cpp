@@ -1,6 +1,20 @@
 // =============================================================================
 // logger.cpp - 日志系统实现
 // =============================================================================
+//
+// 功能: 实现双输出流缓冲区和日志管理器
+//
+// 核心机制:
+//   通过重写 std::streambuf 的虚函数, 拦截所有 cout 输出,
+//   并同时转发到控制台和日志文件, 同时在每行开头添加时间戳。
+//
+// 实现细节:
+//   1. DualStreambuf::overflow()  - 处理单字符输出
+//   2. DualStreambuf::xsputn()    - 处理字符串输出 (提高效率)
+//   3. Logger 构造函数            - 重定向 cout
+//   4. Logger 析构函数            - 恢复 cout
+//
+// =============================================================================
 
 #include "logger.h"
 
@@ -13,78 +27,120 @@ using namespace std;
 // -----------------------------------------------------------------------------
 // 构造函数
 // -----------------------------------------------------------------------------
+// 初始化两个输出缓冲区指针, 并设置初始状态为需要时间戳
+// -----------------------------------------------------------------------------
 DualStreambuf::DualStreambuf(streambuf* console_buf, streambuf* file_buf)
-    : console_buf_(console_buf)
-    , file_buf_(file_buf)
-    , need_timestamp_(true) {
+	: console_buf_(console_buf)
+	, file_buf_(file_buf)
+	, need_timestamp_(true) {
 }
 
 // -----------------------------------------------------------------------------
 // getCurrentTimestamp - 获取当前时间戳
 // -----------------------------------------------------------------------------
-// 返回格式: [YYYY-MM-DD HH:MM:SS.mmm]
+// 功能: 生成格式化的时间戳字符串
+// 返回格式: "[YYYY-MM-DD HH:MM:SS.mmm] "
+//
+// 实现步骤:
+//   1. 获取当前系统时间点
+//   2. 转换为 time_t 格式
+//   3. 提取毫秒部分
+//   4. 使用 put_time 格式化输出
 // -----------------------------------------------------------------------------
 string DualStreambuf::getCurrentTimestamp() {
-    auto now = chrono::system_clock::now();
-    auto time_t = chrono::system_clock::to_time_t(now);
-    auto ms = chrono::duration_cast<chrono::milliseconds>(
-        now.time_since_epoch()) % 1000;
+	// 获取当前时间点
+	auto now = chrono::system_clock::now();
 
-    stringstream ss;
-    ss << "[" << put_time(localtime(&time_t), "%Y-%m-%d %H:%M:%S")
-       << "." << setfill('0') << setw(3) << ms.count() << "] ";
-    return ss.str();
+	// 转换为 time_t (秒级精度)
+	auto time_t = chrono::system_clock::to_time_t(now);
+
+	// 提取毫秒部分
+	auto ms = chrono::duration_cast<chrono::milliseconds>(
+		now.time_since_epoch()) % 1000;
+
+	// 格式化输出
+	stringstream ss;
+	ss << "[" << put_time(localtime(&time_t), "%Y-%m-%d %H:%M:%S")
+	   << "." << setfill('0') << setw(3) << ms.count() << "] ";
+	return ss.str();
 }
 
 // -----------------------------------------------------------------------------
 // writeTimestamp - 写入时间戳到两个缓冲区
 // -----------------------------------------------------------------------------
+// 功能: 将时间戳同时写入控制台和文件缓冲区
+// 注意: 使用 sputn 直接写入, 避免递归调用
+// -----------------------------------------------------------------------------
 void DualStreambuf::writeTimestamp() {
-    string timestamp = getCurrentTimestamp();
+	string timestamp = getCurrentTimestamp();
 
-    if (console_buf_) {
-        console_buf_->sputn(timestamp.c_str(), timestamp.length());
-    }
-    if (file_buf_) {
-        file_buf_->sputn(timestamp.c_str(), timestamp.length());
-    }
+	// 写入控制台缓冲区
+	if (console_buf_) {
+		console_buf_->sputn(timestamp.c_str(), timestamp.length());
+	}
+
+	// 写入文件缓冲区
+	if (file_buf_) {
+		file_buf_->sputn(timestamp.c_str(), timestamp.length());
+	}
 }
 
 // -----------------------------------------------------------------------------
 // overflow - 单字符输出处理
 // -----------------------------------------------------------------------------
+// 功能: 处理单个字符的输出, 这是 streambuf 的核心虚函数
+//
+// 处理逻辑:
+//   1. 如果是行首 (need_timestamp_ = true), 先输出时间戳
+//   2. 将字符同时写入两个缓冲区
+//   3. 如果遇到换行符, 标记下一个字符需要时间戳
+//
+// 参数: c - 要输出的字符 (int 类型以支持 EOF)
+// 返回: 成功返回字符值, 失败返回 EOF
+// -----------------------------------------------------------------------------
 int DualStreambuf::overflow(int c) {
-    if (c != EOF) {
-        // 在行首添加时间戳
-        if (need_timestamp_) {
-            writeTimestamp();
-            need_timestamp_ = false;
-        }
+	if (c != EOF) {
+		// ----- 行首添加时间戳 -----
+		if (need_timestamp_) {
+			writeTimestamp();
+			need_timestamp_ = false;
+		}
 
-        // 同时写入控制台和文件
-        if (console_buf_) {
-            console_buf_->sputc(c);
-        }
-        if (file_buf_) {
-            file_buf_->sputc(c);
-        }
+		// ----- 同时写入两个缓冲区 -----
+		if (console_buf_) {
+			console_buf_->sputc(c);
+		}
+		if (file_buf_) {
+			file_buf_->sputc(c);
+		}
 
-        // 遇到换行符, 下一行需要时间戳
-        if (c == '\n') {
-            need_timestamp_ = true;
-        }
-    }
-    return c;
+		// ----- 换行符标记 -----
+		if (c == '\n') {
+			need_timestamp_ = true;
+		}
+	}
+	return c;
 }
 
 // -----------------------------------------------------------------------------
 // xsputn - 批量字符输出处理
 // -----------------------------------------------------------------------------
+// 功能: 处理字符串的批量输出, 提高输出效率
+//
+// 实现说明:
+//   虽然可以直接调用基类实现, 但这里逐字符处理以确保时间戳正确插入。
+//   对于大量输出, 可以优化为查找换行符后批量写入。
+//
+// 参数:
+//   s     - 字符串指针
+//   count - 字符数量
+// 返回: 实际写入的字符数
+// -----------------------------------------------------------------------------
 streamsize DualStreambuf::xsputn(const char* s, streamsize count) {
-    for (streamsize i = 0; i < count; ++i) {
-        overflow(s[i]);
-    }
-    return count;
+	for (streamsize i = 0; i < count; ++i) {
+		overflow(s[i]);
+	}
+	return count;
 }
 
 // =============================================================================
@@ -94,43 +150,65 @@ streamsize DualStreambuf::xsputn(const char* s, streamsize count) {
 // -----------------------------------------------------------------------------
 // 构造函数 - 初始化日志系统
 // -----------------------------------------------------------------------------
+// 功能: 创建日志文件并重定向 cout 到双输出缓冲区
+//
+// 执行步骤:
+//   1. 生成日志文件路径 (前缀 + .log)
+//   2. 打开日志文件 (覆盖模式)
+//   3. 保存原始 cout 缓冲区 (用于析构时恢复)
+//   4. 创建双输出缓冲区
+//   5. 将 cout 重定向到双缓冲区
+//
+// 参数: log_prefix - 日志文件路径前缀
+// 示例: Logger("output/run") 创建 output/run.log
+// -----------------------------------------------------------------------------
 Logger::Logger(const string& log_prefix)
-    : old_cout_buf_(nullptr)
-    , dual_buf_(nullptr) {
+	: old_cout_buf_(nullptr)
+	, dual_buf_(nullptr) {
 
-    // 生成日志文件路径
-    log_file_path_ = log_prefix + ".log";
+	// ----- 生成日志文件路径 -----
+	log_file_path_ = log_prefix + ".log";
 
-    // 打开日志文件 (覆盖模式)
-    log_file_.open(log_file_path_, ios::out | ios::trunc);
+	// ----- 打开日志文件 -----
+	// ios::out   - 输出模式
+	// ios::trunc - 覆盖已有文件
+	log_file_.open(log_file_path_, ios::out | ios::trunc);
 
-    if (log_file_.is_open()) {
-        // 保存原始 cout 缓冲区
-        old_cout_buf_ = cout.rdbuf();
+	if (log_file_.is_open()) {
+		// ----- 保存原始缓冲区 -----
+		old_cout_buf_ = cout.rdbuf();
 
-        // 创建双输出缓冲区
-        dual_buf_ = make_unique<DualStreambuf>(old_cout_buf_, log_file_.rdbuf());
+		// ----- 创建双输出缓冲区 -----
+		dual_buf_ = make_unique<DualStreambuf>(old_cout_buf_, log_file_.rdbuf());
 
-        // 重定向 cout 到双缓冲区
-        cout.rdbuf(dual_buf_.get());
-    }
+		// ----- 重定向 cout -----
+		cout.rdbuf(dual_buf_.get());
+	}
 }
 
 // -----------------------------------------------------------------------------
 // 析构函数 - 恢复标准输出并关闭日志文件
 // -----------------------------------------------------------------------------
+// 功能: 清理资源, 恢复程序的标准输出状态
+//
+// 执行步骤:
+//   1. 恢复 cout 的原始缓冲区
+//   2. 关闭日志文件
+//
+// 注意: 使用 try-catch 确保析构函数不抛出异常
+// -----------------------------------------------------------------------------
 Logger::~Logger() {
-    try {
-        // 恢复原始 cout 缓冲区
-        if (old_cout_buf_) {
-            cout.rdbuf(old_cout_buf_);
-        }
+	try {
+		// ----- 恢复原始缓冲区 -----
+		if (old_cout_buf_) {
+			cout.rdbuf(old_cout_buf_);
+		}
 
-        // 关闭日志文件
-        if (log_file_.is_open()) {
-            log_file_.close();
-        }
-    } catch (...) {
-        // 忽略析构过程中的异常
-    }
+		// ----- 关闭日志文件 -----
+		if (log_file_.is_open()) {
+			log_file_.close();
+		}
+	} catch (...) {
+		// 忽略析构过程中的异常 (遵循 C++ 最佳实践)
+	}
 }
