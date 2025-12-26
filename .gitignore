@@ -1,0 +1,32 @@
+# Build directories
+build/
+out/
+cmake-build-*/
+
+# IDE files
+.vs/
+.idea/
+*.user
+*.suo
+
+# CPLEX output files
+*.lp
+*.log
+
+# Output txt files (but not CMakeLists.txt)
+/Stock_*.txt
+"Master Problem.txt"
+"Dual Master Problem.txt"
+"*.Master Problem.lp"
+
+# Compiled files
+*.obj
+*.o
+*.exe
+*.dll
+*.lib
+*.pdb
+
+# OS files
+.DS_Store
+Thumbs.db
