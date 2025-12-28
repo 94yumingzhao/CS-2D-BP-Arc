@@ -100,6 +100,9 @@ int main() {
         params.global_best_int_ = root_node.solution_.obj_val_;
         params.global_best_y_cols_ = root_node.solution_.y_columns_;
         params.global_best_x_cols_ = root_node.solution_.x_columns_;
+
+        // 导出根节点解 (供测试可视化)
+        ExportSolution(params, data);
     } else {
         // LP解为分数, 需要分支定价求整数解
         LOG("[结果] 根节点解非整数, 需要分支定价");
@@ -110,6 +113,11 @@ int main() {
         LOG("------------------------------------------------------------");
 
         RunBranchAndPrice(params, data, &root_node);
+
+        // 导出最优解 (供 CS-2D-Fig 可视化)
+        if (params.global_best_int_ < INFINITY) {
+            ExportSolution(params, data);
+        }
     }
 
     // 计算总耗时

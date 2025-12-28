@@ -49,11 +49,16 @@ void SolveRootCG(ProblemParams& params, ProblemData& data, BPNode& root_node) {
     IloNumVarArray vars(env);
     IloRangeArray cons(env);
 
+    // 创建单一IloCplex对象并复用, 避免重复创建/销毁导致的内存问题
+    IloCplex cplex(env);
+    cplex.setOut(env.getNullStream());  // 关闭CPLEX输出
+
     root_node.iter_ = 0;  // 迭代计数器
 
     // 构建并求解初始主问题
     // 初始列来自启发式解 (heuristic.cpp中生成)
-    bool feasible = SolveRootInitMP(params, data, env, model, obj, cons, vars, root_node);
+    bool feasible = SolveRootInitMP(params, data, env, model, obj, cons, vars,
+                                     cplex, root_node);
 
     if (feasible) {
         // 列生成主循环
@@ -82,7 +87,8 @@ void SolveRootCG(ProblemParams& params, ProblemData& data, BPNode& root_node) {
                     if (!sp2_converged) {
                         all_sp2_converged = false;
                         // 找到改进列, 立即添加到主问题
-                        SolveRootUpdateMP(params, data, env, model, obj, cons, vars, root_node);
+                        SolveRootUpdateMP(params, data, env, model, obj, cons, vars,
+                                          cplex, root_node);
                     }
                 }
 
@@ -93,15 +99,18 @@ void SolveRootCG(ProblemParams& params, ProblemData& data, BPNode& root_node) {
                 }
             } else {
                 // SP1找到改进列, 添加新Y列并继续迭代
-                SolveRootUpdateMP(params, data, env, model, obj, cons, vars, root_node);
+                SolveRootUpdateMP(params, data, env, model, obj, cons, vars,
+                                  cplex, root_node);
             }
         }
 
         // 求解最终主问题, 提取完整解
-        SolveRootFinalMP(params, data, env, model, obj, cons, vars, root_node);
+        SolveRootFinalMP(params, data, env, model, obj, cons, vars,
+                         cplex, root_node);
     }
 
     // 释放CPLEX资源
+    cplex.end();
     obj.end();
     vars.end();
     cons.end();
@@ -123,7 +132,8 @@ void SolveRootCG(ProblemParams& params, ProblemData& data, BPNode& root_node) {
 // 返回值: true=可行, false=不可行
 bool SolveRootInitMP(ProblemParams& params, ProblemData& data,
     IloEnv& env, IloModel& model, IloObjective& obj,
-    IloRangeArray& cons, IloNumVarArray& vars, BPNode& root_node) {
+    IloRangeArray& cons, IloNumVarArray& vars,
+    IloCplex& cplex, BPNode& root_node) {
 
     int num_y_cols = static_cast<int>(root_node.y_columns_.size());
     int num_x_cols = static_cast<int>(root_node.x_columns_.size());
@@ -199,10 +209,8 @@ bool SolveRootInitMP(ProblemParams& params, ProblemData& data,
         cplex_col.end();
     }
 
-    // 求解初始主问题
-    IloCplex cplex(env);
+    // 求解初始主问题 (复用传入的cplex对象)
     cplex.extract(model);
-    cplex.setOut(env.getNullStream());  // 关闭CPLEX输出
 
     // 导出LP文件 (调试用)
     if (kExportLp) {
@@ -214,7 +222,6 @@ bool SolveRootInitMP(ProblemParams& params, ProblemData& data,
 
     if (!feasible) {
         LOG("[MP] 初始主问题不可行");
-        cplex.end();
         return false;
     }
 
@@ -230,7 +237,6 @@ bool SolveRootInitMP(ProblemParams& params, ProblemData& data,
         root_node.duals_.push_back(dual);
     }
 
-    cplex.end();
     return true;
 }
 
@@ -241,7 +247,8 @@ bool SolveRootInitMP(ProblemParams& params, ProblemData& data,
 // 返回值: true=更新后可行, false=不可行
 bool SolveRootUpdateMP(ProblemParams& params, ProblemData& data,
     IloEnv& env, IloModel& model, IloObjective& obj,
-    IloRangeArray& cons, IloNumVarArray& vars, BPNode& node) {
+    IloRangeArray& cons, IloNumVarArray& vars,
+    IloCplex& cplex, BPNode& node) {
 
     int num_strip_types = params.num_strip_types_;
     int num_item_types = params.num_item_types_;
@@ -261,6 +268,7 @@ bool SolveRootUpdateMP(ProblemParams& params, ProblemData& data,
 
         int col_id = static_cast<int>(node.y_columns_.size()) + 1;
         string var_name = "Y_" + to_string(col_id);
+
         IloNumVar var(cplex_col, 0, IloInfinity, ILOFLOAT, var_name.c_str());
         vars.add(var);
         cplex_col.end();
@@ -292,6 +300,7 @@ bool SolveRootUpdateMP(ProblemParams& params, ProblemData& data,
 
         int col_id = static_cast<int>(node.x_columns_.size()) + 1;
         string var_name = "X_" + to_string(col_id);
+
         IloNumVar var(cplex_col, 0, IloInfinity, ILOFLOAT, var_name.c_str());
         vars.add(var);
         cplex_col.end();
@@ -308,16 +317,15 @@ bool SolveRootUpdateMP(ProblemParams& params, ProblemData& data,
         node.new_x_col_.arc_set_.clear();
     }
 
-    // 求解更新后的主问题
+    // 求解更新后的主问题 (复用传入的cplex对象)
     LOG_FMT("[MP-%d] 更新并求解主问题\n", node.iter_);
-    IloCplex cplex(env);
-    cplex.extract(model);
-    cplex.setOut(env.getNullStream());
+
+    // 注意: 不需要重新extract, IloCplex会自动跟踪模型变化
+    // 只需调用solve()即可
     bool feasible = cplex.solve();
 
     if (!feasible) {
         LOG("[MP] 更新后主问题不可行");
-        cplex.end();
         return false;
     }
 
@@ -333,7 +341,6 @@ bool SolveRootUpdateMP(ProblemParams& params, ProblemData& data,
         node.duals_.push_back(dual);
     }
 
-    cplex.end();
     return true;
 }
 
@@ -345,13 +352,12 @@ bool SolveRootUpdateMP(ProblemParams& params, ProblemData& data,
 // 返回值: true=可行, false=不可行
 bool SolveRootFinalMP(ProblemParams& params, ProblemData& data,
     IloEnv& env, IloModel& model, IloObjective& obj,
-    IloRangeArray& cons, IloNumVarArray& vars, BPNode& node) {
+    IloRangeArray& cons, IloNumVarArray& vars,
+    IloCplex& cplex, BPNode& node) {
 
     LOG_FMT("[MP-Final] 节点%d求解最终主问题\n", node.id_);
 
-    IloCplex cplex(env);
-    cplex.extract(model);
-    cplex.setOut(env.getNullStream());
+    // 复用传入的cplex对象, 不需要重新extract
 
     // 导出LP文件 (调试用)
     if (kExportLp) {
@@ -363,7 +369,6 @@ bool SolveRootFinalMP(ProblemParams& params, ProblemData& data,
 
     if (!feasible) {
         LOG("[MP] 最终主问题不可行");
-        cplex.end();
         return false;
     }
 
@@ -408,6 +413,5 @@ bool SolveRootFinalMP(ProblemParams& params, ProblemData& data,
         }
     }
 
-    cplex.end();
     return true;
 }

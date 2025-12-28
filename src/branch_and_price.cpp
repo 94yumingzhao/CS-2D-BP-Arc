@@ -16,6 +16,8 @@
 
 #include "2DBP.h"
 
+#include <chrono>
+
 using namespace std;
 
 // 检查 LP 解是否为整数解
@@ -294,6 +296,10 @@ BPNode* SelectBranchNode(BPNode* head) {
 // 输出: 最优整数解存储在 params 中
 int RunBranchAndPrice(ProblemParams& params, ProblemData& data, BPNode* root) {
     LOG("[BP] 分支定价开始 (Arc 分支策略)");
+    LOG_FMT("[BP] 时间限制: %d 秒\n", kMaxBPTimeSec);
+
+    // 记录开始时间
+    auto bp_start_time = chrono::high_resolution_clock::now();
 
     // 确保 Arc Flow 网络已生成
     // 分支定价需要将解转换为 Arc 流量
@@ -424,11 +430,46 @@ int RunBranchAndPrice(ProblemParams& params, ProblemData& data, BPNode* root) {
             curr = curr->next_;
         }
 
+        // 检查时间限制
+        auto current_time = chrono::high_resolution_clock::now();
+        auto elapsed = chrono::duration_cast<chrono::seconds>(
+            current_time - bp_start_time).count();
+        if (elapsed >= kMaxBPTimeSec) {
+            LOG_FMT("[BP] 达到时间限制 (%d 秒), 终止搜索\n", kMaxBPTimeSec);
+            break;
+        }
+
         // 安全检查: 防止无限循环
         if (node_count > 100) {
             LOG("[BP] 达到最大节点数, 强制终止");
             break;
         }
+    }
+
+    // 如果未找到整数解，使用根节点 LP 解的向上取整作为可行解
+    if (params.global_best_int_ >= INFINITY) {
+        LOG("[BP] 未找到整数解, 使用根节点 LP 解向上取整");
+
+        // 对 Y 列取整 (向上取整确保可行性)
+        params.global_best_y_cols_ = root->solution_.y_columns_;
+        double rounded_obj = 0.0;
+        for (auto& y_col : params.global_best_y_cols_) {
+            if (y_col.value_ > kZeroTolerance) {
+                y_col.value_ = ceil(y_col.value_);
+                rounded_obj += y_col.value_;
+            }
+        }
+
+        // 对 X 列取整
+        params.global_best_x_cols_ = root->solution_.x_columns_;
+        for (auto& x_col : params.global_best_x_cols_) {
+            if (x_col.value_ > kZeroTolerance) {
+                x_col.value_ = ceil(x_col.value_);
+            }
+        }
+
+        params.global_best_int_ = rounded_obj;
+        LOG_FMT("[BP] 取整后目标值: %.4f (非最优)\n", params.global_best_int_);
     }
 
     // 计算最优性间隙

@@ -346,7 +346,8 @@ bool SolveRootSP2Knapsack(ProblemParams& params, ProblemData& data,
         vars.add(var);
 
         // 只考虑宽度匹配的子件
-        if (data.item_types_[i].width_ <= strip_width) {
+        int item_width = data.item_types_[i].width_;
+        if (item_width <= strip_width) {
             double dual = node.duals_[num_strip_types + i];
             if (dual > 0) {
                 obj_expr += vars[i] * dual;
@@ -379,6 +380,7 @@ bool SolveRootSP2Knapsack(ProblemParams& params, ProblemData& data,
 
     // 求解
     LOG_FMT("[SP2-%d] 条带类型%d 求解SP2 (背包)\n", node.iter_, strip_type_id);
+
     IloCplex cplex(env);
     cplex.extract(model);
     cplex.setOut(env.getNullStream());
@@ -395,10 +397,15 @@ bool SolveRootSP2Knapsack(ProblemParams& params, ProblemData& data,
             cg_converged = false;
 
             // 提取解
+            // 只对宽度匹配的变量获取值, 其他变量的值为0
+            // 宽度不匹配的变量不在模型中, 调用getValue会崩溃
             node.new_x_col_.pattern_.clear();
             for (int i = 0; i < num_item_types; i++) {
-                double val = cplex.getValue(vars[i]);
-                int int_val = (val - (int)val > 0.99999) ? (int)val + 1 : (int)val;
+                int int_val = 0;
+                if (data.item_types_[i].width_ <= strip_width) {
+                    double val = cplex.getValue(vars[i]);
+                    int_val = (val - (int)val > 0.99999) ? (int)val + 1 : (int)val;
+                }
                 node.new_x_col_.pattern_.push_back(int_val);
             }
             node.new_strip_type_ = strip_type_id;

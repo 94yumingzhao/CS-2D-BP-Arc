@@ -58,6 +58,7 @@ const string kFilePattern = "inst_";            // 算例文件名前缀
 const string kLogDir = "logs/";             // 日志输出目录
 const string kLpDir = "lp/";                // LP 文件输出目录 (调试用)
 constexpr bool kExportLp = false;           // 是否导出 LP 文件，开启会降低性能
+constexpr int kMaxBPTimeSec = 30;           // 分支定价最大运行时间 (秒)，超时输出当前最优解
 
 // 子问题求解方法枚举
 // 三种方法各有特点:
@@ -365,20 +366,23 @@ void RunHeuristic(ProblemParams& params, ProblemData& data, BPNode& root_node);
 // 根节点列生成主循环
 void SolveRootCG(ProblemParams& params, ProblemData& data, BPNode& root_node);
 
-// 构建根节点初始主问题
+// 构建根节点初始主问题 (复用cplex对象)
 bool SolveRootInitMP(ProblemParams& params, ProblemData& data,
     IloEnv& env, IloModel& model, IloObjective& obj,
-    IloRangeArray& cons, IloNumVarArray& vars, BPNode& root_node);
+    IloRangeArray& cons, IloNumVarArray& vars,
+    IloCplex& cplex, BPNode& root_node);
 
-// 更新根节点主问题 (添加新列)
+// 更新根节点主问题 (添加新列, 复用cplex对象)
 bool SolveRootUpdateMP(ProblemParams& params, ProblemData& data,
     IloEnv& env, IloModel& model, IloObjective& obj,
-    IloRangeArray& cons, IloNumVarArray& vars, BPNode& node);
+    IloRangeArray& cons, IloNumVarArray& vars,
+    IloCplex& cplex, BPNode& node);
 
-// 求解根节点最终主问题并提取解
+// 求解根节点最终主问题并提取解 (复用cplex对象)
 bool SolveRootFinalMP(ProblemParams& params, ProblemData& data,
     IloEnv& env, IloModel& model, IloObjective& obj,
-    IloRangeArray& cons, IloNumVarArray& vars, BPNode& node);
+    IloRangeArray& cons, IloNumVarArray& vars,
+    IloCplex& cplex, BPNode& node);
 
 // 根节点子问题函数 (root_node_sub.cpp)
 // SP1: 宽度背包问题 - 选择条带放置在母板上
@@ -457,7 +461,7 @@ BPNode* SelectBranchNode(BPNode* head);
 int RunBranchAndPrice(ProblemParams& params, ProblemData& data, BPNode* root);
 
 // 输出函数 (output.cpp)
+void ExportSolution(ProblemParams& params, ProblemData& data);
 void ExportResults(ProblemParams& params, ProblemData& data);
-void ExportSolution(BPNode* node, ProblemData& data);
 
 #endif  // CS_2D_BP_ARC_H_

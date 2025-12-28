@@ -49,33 +49,34 @@ void RunHeuristic(ProblemParams& params, ProblemData& data, BPNode& root_node) {
     LOG_FMT("  生成Y列数: %d\n", num_strip_types);
 
     // 生成初始X列 (条带切割方案)
-    // 对每种条带类型, 找到一种可以放入该条带的子板
-    // 生成一个只切割该子板的X列
+    // 为每种子板类型生成一个X列, 确保所有需求约束都能被满足
+    // 每个X列只切割一种子板类型
     params.init_x_matrix_.clear();
     root_node.x_columns_.clear();
 
-    for (int j = 0; j < num_strip_types; j++) {
-        int strip_width = data.strip_types_[j].width_;
+    for (int i = 0; i < num_item_types; i++) {
+        int item_width = data.item_types_[i].width_;
 
-        // 遍历所有子板类型, 找到宽度能装入条带的
-        for (int i = 0; i < num_item_types; i++) {
-            int item_width = data.item_types_[i].width_;
-
-            // 子板宽度必须小于等于条带宽度才能装入
-            if (item_width <= strip_width) {
-                // pattern[i] = 1 表示切割一个i型子板
-                vector<int> pattern(num_item_types, 0);
-                pattern[i] = 1;
-
-                params.init_x_matrix_.push_back(pattern);
-
-                XColumn x_col;
-                x_col.strip_type_id_ = j;  // 该X列属于j型条带
-                x_col.pattern_ = pattern;
-                root_node.x_columns_.push_back(x_col);
-
-                break;  // 每种条带类型只生成一个初始X列
+        // 找到该子板对应的条带类型 (宽度相等)
+        int strip_type = -1;
+        for (int j = 0; j < num_strip_types; j++) {
+            if (data.strip_types_[j].width_ == item_width) {
+                strip_type = j;
+                break;
             }
+        }
+
+        if (strip_type >= 0) {
+            // pattern[i] = 1 表示切割一个i型子板
+            vector<int> pattern(num_item_types, 0);
+            pattern[i] = 1;
+
+            params.init_x_matrix_.push_back(pattern);
+
+            XColumn x_col;
+            x_col.strip_type_id_ = strip_type;  // 该X列属于对应条带类型
+            x_col.pattern_ = pattern;
+            root_node.x_columns_.push_back(x_col);
         }
     }
 

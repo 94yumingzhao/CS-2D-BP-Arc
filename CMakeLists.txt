@@ -70,6 +70,7 @@ set(SOURCES
     ${SRC_DIR}/main.cpp
     ${SRC_DIR}/logger.cpp
     ${SRC_DIR}/input.cpp
+    ${SRC_DIR}/output.cpp
     ${SRC_DIR}/heuristic.cpp
     ${SRC_DIR}/arc_flow.cpp
     ${SRC_DIR}/root_node.cpp
