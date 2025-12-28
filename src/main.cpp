@@ -11,8 +11,12 @@
 using namespace std;
 
 int main() {
-    // 初始化日志系统
-    string log_file = "log_2DBP_Arc_" + GetTimestampString();
+    // 创建输出目录
+    filesystem::create_directories("logs");
+    filesystem::create_directories("lp");
+
+    // 初始化日志系统 (日志文件放在 logs/ 目录)
+    string log_file = "logs/log_2DBP_Arc_" + GetTimestampString();
     Logger logger(log_file);
 
     LOG("[系统] 日志初始化完成");

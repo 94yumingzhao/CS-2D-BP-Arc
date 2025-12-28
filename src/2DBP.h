@@ -35,12 +35,22 @@ constexpr double kRcTolerance = 1.0e-6;     // 检验数容差
 constexpr double kZeroTolerance = 1.0e-10;  // 零值容差
 constexpr int kMaxCgIter = 100;             // 列生成最大迭代次数
 const string kFilePath = "data/test.txt";   // 默认数据文件路径
+const string kLogDir = "logs/";             // 日志输出目录
+const string kLpDir = "lp/";                // LP文件输出目录
+constexpr bool kExportLp = false;           // 是否导出LP文件 (调试用)
 
 // 子问题求解方法枚举
 enum SPMethod {
     kCplexIP = 0,   // CPLEX整数规划
     kArcFlow = 1,   // Arc Flow模型
     kDP = 2         // 动态规划
+};
+
+// 分支类型枚举
+enum BranchType {
+    kBranchNone = 0,    // 无需分支 (整数解)
+    kBranchSP1Arc = 1,  // SP1 Arc 分支 (宽度方向)
+    kBranchSP2Arc = 2   // SP2 Arc 分支 (长度方向)
 };
 
 // 子件类型: 存储同一规格子件的类型信息
@@ -142,9 +152,30 @@ struct BPNode {
     double branch_floor_ = -1;          // 向下取整值
     double branch_ceil_ = -1;           // 向上取整值
 
-    // 分支历史 (累积的分支约束)
+    // 分支历史 (累积的分支约束) - 变量分支 (已废弃, 保留兼容)
     vector<int> branched_var_ids_;      // 已分支变量索引
     vector<double> branched_bounds_;    // 已分支变量整数边界
+
+    // Arc 分支类型和待分支 Arc 信息
+    int branch_type_ = kBranchNone;             // 分支类型
+    array<int, 2> branch_arc_ = {-1, -1};       // 待分支 Arc [起点, 终点]
+    double branch_arc_flow_ = -1;               // Arc 流量值
+    int branch_arc_strip_type_ = -1;            // SP2 分支时的条带类型
+
+    // SP1 Arc 约束 (宽度方向, 从父节点累积继承)
+    set<array<int, 2>> sp1_zero_arcs_;          // Arc = 0 (禁用)
+    vector<array<int, 2>> sp1_lower_arcs_;      // Arc <= N
+    vector<int> sp1_lower_bounds_;
+    vector<array<int, 2>> sp1_greater_arcs_;    // Arc >= N
+    vector<int> sp1_greater_bounds_;
+
+    // SP2 Arc 约束 (长度方向, 按条带类型存储, 从父节点累积继承)
+    // sp2_zero_arcs_[j] = 条带类型 j 的禁用 Arc 集合
+    map<int, set<array<int, 2>>> sp2_zero_arcs_;
+    map<int, vector<array<int, 2>>> sp2_lower_arcs_;
+    map<int, vector<int>> sp2_lower_bounds_;
+    map<int, vector<array<int, 2>>> sp2_greater_arcs_;
+    map<int, vector<int>> sp2_greater_bounds_;
 
     // 主问题系数矩阵
     vector<vector<double>> matrix_;             // 完整系数矩阵
@@ -230,6 +261,18 @@ void ConvertPatternToArcSet(vector<int>& pattern, vector<int>& sizes,
 void GenerateYArcSetMatrix(BPNode& node, vector<int>& strip_widths);
 void GenerateXArcSetMatrix(BPNode& node, vector<int>& item_lengths, int strip_type);
 
+// Arc Flow 解转换函数 (arc_flow.cpp)
+void ConvertYColsToSP1ArcFlow(vector<YColumn>& y_columns, ProblemData& data,
+    map<int, tuple<int, int, double>>& arc_flow_solution);
+void ConvertXColsToSP2ArcFlow(vector<XColumn>& x_columns, int strip_type_id,
+    ProblemData& data, map<int, tuple<int, int, double>>& arc_flow_solution);
+bool FindBranchArcSP1(map<int, tuple<int, int, double>>& arc_flow_solution,
+    array<int, 2>& branch_arc, double& branch_flow);
+bool FindBranchArcSP2(map<int, tuple<int, int, double>>& arc_flow_solution,
+    array<int, 2>& branch_arc, double& branch_flow);
+void PrintSP1ArcFlowSolution(map<int, tuple<int, int, double>>& solution);
+void PrintSP2ArcFlowSolution(map<int, tuple<int, int, double>>& solution, int strip_type);
+
 // 输入输出函数 (input.cpp)
 void SplitString(const string& s, vector<string>& v, const string& c);
 tuple<int, int, int> LoadInput(ProblemParams& params, ProblemData& data);
@@ -307,7 +350,8 @@ bool SolveNodeSP2(ProblemParams& params, ProblemData& data,
 
 // 分支定价函数 (branch_and_price.cpp)
 bool IsIntegerSolution(NodeSolution& solution);
-int SelectBranchVar(BPNode* node);
+int SelectBranchVar(BPNode* node);  // 变量分支 (已废弃)
+int SelectBranchArc(ProblemParams& params, ProblemData& data, BPNode* node);  // Arc 分支
 void CreateLeftChild(BPNode* parent, int new_id, BPNode* child);
 void CreateRightChild(BPNode* parent, int new_id, BPNode* child);
 int RunBranchAndPrice(ProblemParams& params, ProblemData& data, BPNode* root);

@@ -91,6 +91,12 @@ Logger::Logger(const string& log_prefix)
 
     log_file_path_ = log_prefix + ".log";
 
+    // 确保日志文件所在目录存在
+    filesystem::path log_path(log_file_path_);
+    if (log_path.has_parent_path()) {
+        filesystem::create_directories(log_path.parent_path());
+    }
+
     log_file_.open(log_file_path_, ios::out | ios::trunc);
 
     if (log_file_.is_open()) {

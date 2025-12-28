@@ -158,6 +158,13 @@ bool SolveRootInitMP(ProblemParams& params, ProblemData& data,
     IloCplex cplex(env);
     cplex.extract(model);
     cplex.setOut(env.getNullStream());
+
+    // 导出LP文件 (调试用)
+    if (kExportLp) {
+        string lp_file = kLpDir + "root_init_mp.lp";
+        cplex.exportModel(lp_file.c_str());
+    }
+
     bool feasible = cplex.solve();
 
     if (!feasible) {
@@ -284,6 +291,13 @@ bool SolveRootFinalMP(ProblemParams& params, ProblemData& data,
     IloCplex cplex(env);
     cplex.extract(model);
     cplex.setOut(env.getNullStream());
+
+    // 导出LP文件 (调试用)
+    if (kExportLp) {
+        string lp_file = kLpDir + "root_final_mp.lp";
+        cplex.exportModel(lp_file.c_str());
+    }
+
     bool feasible = cplex.solve();
 
     if (!feasible) {

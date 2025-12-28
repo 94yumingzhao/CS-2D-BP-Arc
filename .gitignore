@@ -13,6 +13,12 @@ cmake-build-*/
 *.lp
 *.log
 
+# Output directories (keep structure, ignore contents)
+logs/*
+lp/*
+!logs/.gitkeep
+!lp/.gitkeep
+
 # Output txt files (but not CMakeLists.txt)
 /Stock_*.txt
 "Master Problem.txt"

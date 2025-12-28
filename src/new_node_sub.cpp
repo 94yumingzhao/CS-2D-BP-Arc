@@ -143,6 +143,31 @@ bool SolveNodeSP1ArcFlow(ProblemParams& params, ProblemData& data, BPNode* node)
         out_expr.end();
     }
 
+    // 添加 SP1 Arc 约束 (从父节点继承)
+    // 禁用 Arc
+    for (const auto& arc : node->sp1_zero_arcs_) {
+        if (arc_data.arc_to_index_.count(arc)) {
+            int idx = arc_data.arc_to_index_.at(arc);
+            vars[idx].setUB(0);
+        }
+    }
+    // Arc <= N 约束
+    for (size_t i = 0; i < node->sp1_lower_arcs_.size(); i++) {
+        const auto& arc = node->sp1_lower_arcs_[i];
+        if (arc_data.arc_to_index_.count(arc)) {
+            int idx = arc_data.arc_to_index_.at(arc);
+            vars[idx].setUB(node->sp1_lower_bounds_[i]);
+        }
+    }
+    // Arc >= N 约束
+    for (size_t i = 0; i < node->sp1_greater_arcs_.size(); i++) {
+        const auto& arc = node->sp1_greater_arcs_[i];
+        if (arc_data.arc_to_index_.count(arc)) {
+            int idx = arc_data.arc_to_index_.at(arc);
+            vars[idx].setLB(node->sp1_greater_bounds_[i]);
+        }
+    }
+
     LOG_FMT("[SP1-%d] 节点%d 求解SP1 (Arc Flow)\n", node->iter_, node->id_);
     IloCplex cplex(env);
     cplex.extract(model);
@@ -366,6 +391,39 @@ bool SolveNodeSP2ArcFlow(ProblemParams& params, ProblemData& data,
         model.add(in_expr == out_expr);
         in_expr.end();
         out_expr.end();
+    }
+
+    // 添加 SP2 Arc 约束 (针对该条带类型, 从父节点继承)
+    // 禁用 Arc
+    if (node->sp2_zero_arcs_.count(strip_type_id)) {
+        for (const auto& arc : node->sp2_zero_arcs_.at(strip_type_id)) {
+            if (arc_data.arc_to_index_.count(arc)) {
+                int idx = arc_data.arc_to_index_.at(arc);
+                vars[idx].setUB(0);
+            }
+        }
+    }
+    // Arc <= N 约束
+    if (node->sp2_lower_arcs_.count(strip_type_id)) {
+        const auto& arcs = node->sp2_lower_arcs_.at(strip_type_id);
+        const auto& bounds = node->sp2_lower_bounds_.at(strip_type_id);
+        for (size_t i = 0; i < arcs.size(); i++) {
+            if (arc_data.arc_to_index_.count(arcs[i])) {
+                int idx = arc_data.arc_to_index_.at(arcs[i]);
+                vars[idx].setUB(bounds[i]);
+            }
+        }
+    }
+    // Arc >= N 约束
+    if (node->sp2_greater_arcs_.count(strip_type_id)) {
+        const auto& arcs = node->sp2_greater_arcs_.at(strip_type_id);
+        const auto& bounds = node->sp2_greater_bounds_.at(strip_type_id);
+        for (size_t i = 0; i < arcs.size(); i++) {
+            if (arc_data.arc_to_index_.count(arcs[i])) {
+                int idx = arc_data.arc_to_index_.at(arcs[i]);
+                vars[idx].setLB(bounds[i]);
+            }
+        }
     }
 
     LOG_FMT("[SP2-%d] 条带类型%d 求解SP2 (Arc Flow)\n", node->iter_, strip_type_id);
