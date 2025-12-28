@@ -1,16 +1,16 @@
 // input.cpp - 数据读取与辅助函数
 //
 // 本文件实现数据读取和各类辅助函数:
-// - LoadInput: 从文件读取问题实例 (支持 2DPackLib CSV 格式)
+// - LoadInput: 从文件读取问题实例 (OR标准CSV格式)
 // - Build*Index: 构建索引映射表
 // - Print*: 调试输出函数
 //
-// 数据文件格式 (2DPackLib CSV):
+// 数据文件格式 (OR标准):
 //   # 开头的行为注释
-//   stock_width,stock_height  <- 表头
-//   500,300                   <- 母板尺寸 (width=长度, height=宽度)
-//   id,width,height,demand    <- 表头
-//   0,180,180,3               <- 子板数据
+//   stock_width,stock_length  <- 表头 (W=宽度, L=长度)
+//   200,400                   <- 母板尺寸
+//   id,width,length,demand    <- 表头 (w_i, l_i, d_i)
+//   0,50,80,3                 <- 子板数据
 //   ...
 
 #include "2DBP.h"
@@ -129,19 +129,20 @@ tuple<int, int, int> LoadInput(ProblemParams& params, ProblemData& data) {
         if (tokens.empty()) continue;
 
         if (!stock_read) {
-            // 第一个数据行: 母板尺寸 (width, height)
-            // 2DPackLib: width=水平方向, height=垂直方向
-            params.stock_length_ = stoi(tokens[0]);  // width -> 长度
-            params.stock_width_ = stoi(tokens[1]);   // height -> 宽度
+            // 第一个数据行: 母板尺寸 (width, length)
+            // OR标准: width=W(切割方向), length=L(条带延伸方向)
+            params.stock_width_ = stoi(tokens[0]);   // W: 宽度
+            params.stock_length_ = stoi(tokens[1]);  // L: 长度
             stock_read = true;
-            LOG_FMT("[数据] 母板尺寸: %d x %d\n",
-                params.stock_length_, params.stock_width_);
+            LOG_FMT("[数据] 母板尺寸: W=%d x L=%d\n",
+                params.stock_width_, params.stock_length_);
         } else {
-            // 子板数据行: id, width, height, demand
+            // 子板数据行: id, width, length, demand
+            // OR标准: w_i(宽度), l_i(长度), d_i(需求)
             ItemType item_type;
             item_type.type_id_ = stoi(tokens[0]);
-            item_type.length_ = stoi(tokens[1]);   // width -> 长度
-            item_type.width_ = stoi(tokens[2]);    // height -> 宽度
+            item_type.width_ = stoi(tokens[1]);    // w_i: 宽度
+            item_type.length_ = stoi(tokens[2]);   // l_i: 长度
             item_type.demand_ = stoi(tokens[3]);
 
             data.item_types_.push_back(item_type);
