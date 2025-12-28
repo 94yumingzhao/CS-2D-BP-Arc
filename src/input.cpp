@@ -1,15 +1,17 @@
 // input.cpp - 数据读取与辅助函数
 //
 // 本文件实现数据读取和各类辅助函数:
-// - LoadInput: 从文件读取问题实例
+// - LoadInput: 从文件读取问题实例 (支持 2DPackLib CSV 格式)
 // - Build*Index: 构建索引映射表
 // - Print*: 调试输出函数
 //
-// 数据文件格式 (制表符分隔):
-//   第1行: (未使用)
-//   第2行: 子板类型数量
-//   第3行: 母板长度 \t 母板宽度
-//   后续行: 子板长度 \t 子板宽度 \t 需求量
+// 数据文件格式 (2DPackLib CSV):
+//   # 开头的行为注释
+//   stock_width,stock_height  <- 表头
+//   500,300                   <- 母板尺寸 (width=长度, height=宽度)
+//   id,width,height,demand    <- 表头
+//   0,180,180,3               <- 子板数据
+//   ...
 
 #include "2DBP.h"
 
@@ -37,8 +39,57 @@ void SplitString(const string& str, vector<string>& result, const string& delimi
     }
 }
 
-// 读取问题数据
-// 功能: 从数据文件读取二维下料问题实例
+// 判断是否为注释行或空行
+bool IsCommentOrEmpty(const string& line) {
+    if (line.empty()) return true;
+    size_t pos = line.find_first_not_of(" \t\r\n");
+    if (pos == string::npos) return true;
+    return line[pos] == '#';
+}
+
+// 判断是否为表头行 (包含字母)
+bool IsHeaderLine(const string& line) {
+    for (char c : line) {
+        if (isalpha(c) && c != ',') return true;
+    }
+    return false;
+}
+
+// 获取目录中最新的算例文件
+// 按文件名排序选择最后一个 (时间戳在前的命名方式)
+string GetLatestInstanceFile(const string& data_dir) {
+    namespace fs = filesystem;
+
+    if (!fs::exists(data_dir) || !fs::is_directory(data_dir)) {
+        LOG_FMT("[错误] 目录不存在: %s\n", data_dir.c_str());
+        return "";
+    }
+
+    vector<string> csv_files;
+    for (const auto& entry : fs::directory_iterator(data_dir)) {
+        if (entry.is_regular_file()) {
+            string filename = entry.path().filename().string();
+            // 匹配以 kFilePattern 开头的 csv 文件
+            if (filename.find(kFilePattern) == 0 &&
+                filename.size() > 4 &&
+                filename.substr(filename.size() - 4) == ".csv") {
+                csv_files.push_back(entry.path().string());
+            }
+        }
+    }
+
+    if (csv_files.empty()) {
+        LOG_FMT("[错误] 目录中无算例文件: %s\n", data_dir.c_str());
+        return "";
+    }
+
+    // 按文件名排序, 时间戳在前所以最后一个是最新的
+    sort(csv_files.begin(), csv_files.end());
+    return csv_files.back();
+}
+
+// 读取问题数据 (2DPackLib CSV 格式)
+// 功能: 从 CSV 文件读取二维下料问题实例
 // 输出:
 //   - params: 问题参数 (尺寸, 数量等)
 //   - data: 问题数据 (子板类型, 条带类型等)
@@ -48,51 +99,60 @@ tuple<int, int, int> LoadInput(ProblemParams& params, ProblemData& data) {
     string line;
     vector<string> tokens;
 
-    LOG_FMT("[数据] 读取文件: %s\n", kFilePath.c_str());
-
-    // 打开数据文件
-    ifstream fin(kFilePath.c_str());
-    if (!fin) {
-        LOG_FMT("[错误] 无法打开文件: %s\n", kFilePath.c_str());
+    // 自动选择最新的算例文件
+    string file_path = GetLatestInstanceFile(kDataDir);
+    if (file_path.empty()) {
+        LOG("[错误] 未找到算例文件");
         return make_tuple(-1, 0, 0);
     }
 
-    // 第1行: 母板长度 (暂不使用, 从第3行读取)
-    getline(fin, line);
+    LOG_FMT("[数据] 读取文件: %s\n", file_path.c_str());
 
-    // 第2行: 子板类型数量
-    getline(fin, line);
-    SplitString(line, tokens, "\t");
-    params.num_item_types_ = stoi(tokens[0]);
+    ifstream fin(file_path.c_str());
+    if (!fin) {
+        LOG_FMT("[错误] 无法打开文件: %s\n", file_path.c_str());
+        return make_tuple(-1, 0, 0);
+    }
 
-    // 第3行: 母板尺寸 (长度 宽度)
-    getline(fin, line);
-    SplitString(line, tokens, "\t");
-    params.stock_length_ = stoi(tokens[0]);  // 母板长度 = 条带长度
-    params.stock_width_ = stoi(tokens[1]);   // 母板宽度 = 条带宽度上限
-
-    LOG_FMT("[数据] 母板尺寸: %d x %d\n", params.stock_length_, params.stock_width_);
-    LOG_FMT("[数据] 子板类型数: %d\n", params.num_item_types_);
-
-    // 读取子板类型数据
+    bool stock_read = false;
     int total_demand = 0;
-    set<int> unique_widths;  // 记录所有不同的宽度
+    set<int> unique_widths;
 
-    for (int i = 0; i < params.num_item_types_; i++) {
-        getline(fin, line);
-        SplitString(line, tokens, "\t");
+    while (getline(fin, line)) {
+        // 跳过注释行和空行
+        if (IsCommentOrEmpty(line)) continue;
+        // 跳过表头行
+        if (IsHeaderLine(line)) continue;
 
-        ItemType item_type;
-        item_type.type_id_ = i;
-        item_type.length_ = stoi(tokens[0]);  // 子板长度 (沿条带方向)
-        item_type.width_ = stoi(tokens[1]);   // 子板宽度 (决定条带类型)
-        item_type.demand_ = stoi(tokens[2]);  // 需求量
+        // 解析 CSV 数据
+        SplitString(line, tokens, ",");
+        if (tokens.empty()) continue;
 
-        data.item_types_.push_back(item_type);
-        total_demand += item_type.demand_;
-        unique_widths.insert(item_type.width_);
+        if (!stock_read) {
+            // 第一个数据行: 母板尺寸 (width, height)
+            // 2DPackLib: width=水平方向, height=垂直方向
+            params.stock_length_ = stoi(tokens[0]);  // width -> 长度
+            params.stock_width_ = stoi(tokens[1]);   // height -> 宽度
+            stock_read = true;
+            LOG_FMT("[数据] 母板尺寸: %d x %d\n",
+                params.stock_length_, params.stock_width_);
+        } else {
+            // 子板数据行: id, width, height, demand
+            ItemType item_type;
+            item_type.type_id_ = stoi(tokens[0]);
+            item_type.length_ = stoi(tokens[1]);   // width -> 长度
+            item_type.width_ = stoi(tokens[2]);    // height -> 宽度
+            item_type.demand_ = stoi(tokens[3]);
+
+            data.item_types_.push_back(item_type);
+            total_demand += item_type.demand_;
+            unique_widths.insert(item_type.width_);
+        }
     }
     fin.close();
+
+    params.num_item_types_ = static_cast<int>(data.item_types_.size());
+    LOG_FMT("[数据] 子板类型数: %d\n", params.num_item_types_);
 
     // 条带类型数量 = 不同宽度的数量
     // 因为同宽度的子板可以放在同一条带上切割

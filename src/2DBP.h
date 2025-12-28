@@ -53,7 +53,8 @@ constexpr double kRcTolerance = 1.0e-6;     // 检验数 (Reduced Cost) 容差
                                             // RC > 1 + kRcTolerance 才认为找到改进列
 constexpr double kZeroTolerance = 1.0e-10;  // 零值容差，|x| < kZeroTolerance 视为 0
 constexpr int kMaxCgIter = 100;             // 列生成最大迭代次数，防止无限循环
-const string kFilePath = "data/test.txt";   // 默认数据文件路径
+const string kDataDir = "../CS-2D-Data/data/";  // 算例数据目录 (CS-2D-Data输出)
+const string kFilePattern = "inst_";            // 算例文件名前缀
 const string kLogDir = "logs/";             // 日志输出目录
 const string kLpDir = "lp/";                // LP 文件输出目录 (调试用)
 constexpr bool kExportLp = false;           // 是否导出 LP 文件，开启会降低性能
