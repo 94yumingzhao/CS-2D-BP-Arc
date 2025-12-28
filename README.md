@@ -1,283 +1,573 @@
-# CS-2D-BP-Arc: 二维下料问题分支定价求解器 (Arc Flow)
+# CS-2D-BP-Arc: 二维下料问题分支定价求解器
+
+## 目录
+
+1. [项目概述](#1-项目概述)
+2. [问题描述](#2-问题描述)
+3. [两阶段切割模型](#3-两阶段切割模型)
+4. [数学模型](#4-数学模型)
+5. [列生成算法](#5-列生成算法)
+6. [Arc Flow网络模型](#6-arc-flow网络模型)
+7. [分支定价算法](#7-分支定价算法)
+8. [Arc分支策略](#8-arc分支策略)
+9. [程序架构](#9-程序架构)
+10. [构建与运行](#10-构建与运行)
+11. [参考文献](#11-参考文献)
+
+---
 
 ## 1. 项目概述
 
-**CS-2D-BP-Arc** 是一个用于求解二维下料问题的分支定价算法实现，采用两阶段切割模型，子问题支持 CPLEX IP、Arc Flow、DP 三种求解方法，分支策略采用 Arc 流量分支。
+**CS-2D-BP-Arc** 是一个用于求解二维下料问题 (Two-Dimensional Cutting Stock Problem, 2D-CSP) 的精确算法实现。该求解器采用分支定价 (Branch and Price) 框架，结合列生成 (Column Generation) 技术和 Arc Flow 网络模型，能够求解具有两阶段切割约束的二维下料问题的整数最优解。
 
-### 问题描述
+### 主要特性
 
-- **输入**: 固定尺寸的母板 ($L \times W$) 和多种子件类型 (各有长度、宽度、需求量)
-- **切割方式**: 两阶段切割 (Two-Stage Cutting)
-- **目标**: 最小化使用的母板数量
+- **精确求解**: 基于分支定价框架，保证求解整数最优解
+- **两阶段切割**: 支持工业中常见的两阶段正交切割模式
+- **多种子问题求解方法**: CPLEX整数规划、Arc Flow网络流、动态规划
+- **Arc分支策略**: 使用网络流量分支，避免传统变量分支的对称性问题
+- **模块化设计**: 清晰的代码结构，便于理解和扩展
 
 ### 技术栈
 
 | 项目 | 说明 |
 |------|------|
-| 语言 | C++17 |
+| 编程语言 | C++17 |
 | 编译器 | MSVC (Visual Studio 2022) |
 | 构建系统 | CMake 3.24+ |
 | 优化求解器 | IBM CPLEX 22.1.0 |
-| 平台 | Windows x64 |
+| 运行平台 | Windows x64 |
 
 ---
 
-## 2. 两阶段切割模型
+## 2. 问题描述
 
-### 切割层次
+### 2.1 问题背景
+
+二维下料问题源于制造业中的材料切割优化。在钢铁、玻璃、木材、纸张等行业，需要从标准尺寸的原材料（母板）上切割出客户订购的各种规格的产品（子板）。由于原材料成本通常占生产成本的很大比例，如何规划切割方案以最小化原材料消耗具有重要的经济价值。
+
+### 2.2 问题定义
+
+**输入**:
+- 母板: 固定尺寸 $L \times W$ (长度 $\times$ 宽度)，数量不限
+- 子板类型: $N$ 种不同规格的子板，每种具有:
+  - 长度 $l_i$
+  - 宽度 $w_i$
+  - 需求量 $d_i$
+
+**约束**:
+- 采用两阶段正交切割 (详见第3节)
+- 子板不可旋转 (长度方向固定)
+- 切割必须贯穿整个母板/条带 (guillotine切割)
+
+**目标**:
+- 最小化使用的母板数量
+
+### 2.3 问题复杂性
+
+二维下料问题是NP-hard问题，其计算复杂度随问题规模呈指数增长。传统的整数规划方法难以直接求解中大规模实例，因为可能的切割模式数量是指数级的。分支定价算法通过列生成技术动态生成有价值的切割模式，有效降低了计算复杂度。
+
+---
+
+## 3. 两阶段切割模型
+
+### 3.1 切割方式
+
+两阶段切割 (Two-Stage Cutting) 是一种工业实践中广泛采用的切割方式，将切割过程分为两个阶段:
+
+**第一阶段 (纵向切割)**:
+- 沿母板的宽度方向进行切割
+- 将母板分割成若干条带 (Strip)
+- 每条条带的长度等于母板长度 $L$，宽度为某种子板的宽度 $w_j$
+
+**第二阶段 (横向切割)**:
+- 在每条条带内部，沿长度方向进行切割
+- 将条带分割成若干子板
+- 放入同一条带的子板必须具有相同的宽度
+
+### 3.2 切割层次示意
 
 ```
 母板 (L x W)
-    |
-    | 第一阶段: 沿宽度方向切割 (SP1)
-    v
-条带 (L x w_j)
-    |
-    | 第二阶段: 沿长度方向切割 (SP2)
-    v
-子件 (l_i x w_i)
+├── 条带1 (L x w₁) ──┬── 子板a (l_a x w₁)
+│                    ├── 子板b (l_b x w₁)
+│                    └── 子板c (l_c x w₁)
+├── 条带2 (L x w₂) ──┬── 子板d (l_d x w₂)
+│                    └── 子板e (l_e x w₂)
+└── 条带3 (L x w₃) ──── 子板f (l_f x w₃)
 ```
 
-### 切割规则
+### 3.3 条带类型
 
-- 条带宽度 $w_j$ 对应某种子件宽度
-- 条带长度等于母板长度 $L$
-- 放入条带的子件宽度必须等于该条带宽度
+由于放入同一条带的子板必须具有相同的宽度，条带类型的数量等于子板宽度的种类数。设有 $J$ 种不同的条带类型，第 $j$ 种条带的宽度记为 $w_j$。
+
+**条带类型与子板的对应关系**:
+- 条带类型 $j$ 的宽度 $w_j$ 对应某种子板的宽度
+- 只有宽度等于 $w_j$ 的子板才能放入 $j$ 型条带
+- 多种子板可能具有相同宽度，因此可以放入同一类型的条带
 
 ---
 
-## 3. 数学模型
+## 4. 数学模型
 
-### 3.1 符号定义
+### 4.1 符号定义
 
+**问题参数**:
 | 符号 | 含义 |
 |------|------|
-| $L, W$ | 母板长度、宽度 |
-| $N$ | 子件类型数量 |
+| $L$ | 母板长度 |
+| $W$ | 母板宽度 |
+| $N$ | 子板类型数量 |
 | $J$ | 条带类型数量 |
-| $l_i, w_i, d_i$ | 子件类型 $i$ 的长度、宽度、需求量 |
-| $w_j$ | 条带类型 $j$ 的宽度 |
+| $l_i$ | 子板类型 $i$ 的长度 |
+| $w_i$ | 子板类型 $i$ 的宽度 |
+| $d_i$ | 子板类型 $i$ 的需求量 |
 
-### 3.2 主问题 (Master Problem)
+**列生成相关**:
+| 符号 | 含义 |
+|------|------|
+| $\mathcal{Y}$ | Y列集合 (母板切割模式) |
+| $\mathcal{X}$ | X列集合 (条带切割模式) |
+| $c_{jk}$ | Y列 $k$ 产出 $j$ 型条带的数量 |
+| $b_{ip}$ | X列 $p$ 产出 $i$ 型子板的数量 |
+
+### 4.2 主问题模型 (Master Problem)
+
+主问题决定每种切割模式的使用次数，目标是最小化母板总数。
 
 **决策变量**:
-- $y_k$: Y列 (母板切割模式) $k$ 的使用次数
-- $x_p$: X列 (条带切割模式) $p$ 的使用次数
+- $y_k \geq 0$: Y列（母板切割模式）$k$ 的使用次数
+- $x_p \geq 0$: X列（条带切割模式）$p$ 的使用次数
 
 **目标函数**:
 
-$$\min \sum_{k} y_k$$
+$$\min \sum_{k \in \mathcal{Y}} y_k$$
+
+目标是最小化母板使用总量，每使用一个Y列对应使用一块母板。
 
 **约束条件**:
 
-条带平衡约束 (条带产出 >= 条带消耗):
+**(1) 条带平衡约束**: 每种条带的产出量必须大于等于消耗量
 
-$$\sum_{k} c_{jk} y_k - \sum_{p \in P_j} x_p \geq 0, \quad \forall j$$
+$$\sum_{k \in \mathcal{Y}} c_{jk} \cdot y_k - \sum_{p \in \mathcal{X}_j} x_p \geq 0, \quad \forall j = 1, \ldots, J$$
 
-子件需求约束:
+其中 $\mathcal{X}_j$ 表示属于 $j$ 型条带的X列集合。左边是Y列产出的 $j$ 型条带数量，右边是X列消耗的 $j$ 型条带数量。
 
-$$\sum_{p} b_{ip} x_p \geq d_i, \quad \forall i$$
+**(2) 需求约束**: 每种子板的切割量必须满足需求
 
-### 3.3 SP1: 宽度方向背包
+$$\sum_{p \in \mathcal{X}} b_{ip} \cdot x_p \geq d_i, \quad \forall i = 1, \ldots, N$$
 
-选择条带放置在母板上:
+### 4.3 对偶问题与对偶价格
 
-$$\max \sum_{j=1}^{J} \pi_j G_j$$
+主问题的LP松弛对应以下对偶变量:
+- $v_j$: 条带平衡约束的对偶价格，表示多产出一个 $j$ 型条带对目标的边际贡献
+- $\pi_i$: 需求约束的对偶价格，表示多切出一个 $i$ 型子板对目标的边际贡献
 
-$$\text{s.t.} \quad \sum_{j=1}^{J} w_j G_j \leq W, \quad G_j \in \mathbb{Z}^+$$
+这些对偶价格用于子问题中评估新列的价值。
 
-其中 $\pi_j$ 为条带平衡约束的对偶价格。
+### 4.4 子问题模型
 
-### 3.4 SP2: 长度方向背包
+#### SP1: 宽度方向背包问题
 
-选择子件放置在条带上:
+SP1为Y列定价问题，目标是寻找能改进主问题目标的新母板切割模式。
 
-$$\max \sum_{i: w_i = w_j} \mu_i D_i$$
+**数学模型**:
 
-$$\text{s.t.} \quad \sum_{i: w_i = w_j} l_i D_i \leq L, \quad D_i \in \mathbb{Z}^+$$
+$$\max \sum_{j=1}^{J} v_j \cdot G_j$$
 
-其中 $\mu_i$ 为子件需求约束的对偶价格。
+$$\text{s.t.} \quad \sum_{j=1}^{J} w_j \cdot G_j \leq W$$
 
----
+$$G_j \in \mathbb{Z}^+, \quad \forall j$$
 
-## 4. Arc Flow 模型
+其中:
+- $G_j$: 该模式中切割 $j$ 型条带的数量
+- $v_j$: 条带平衡约束的对偶价格
+- $w_j$: 条带类型 $j$ 的宽度
 
-### 4.1 网络结构
+**列生成收敛条件**: 若最优目标值 $\leq 1$，则无改进Y列，SP1收敛。
 
-将背包问题建模为网络流问题:
+#### SP2: 长度方向背包问题
 
-**SP1 网络 (宽度方向)**:
-- 节点: $0, 1, 2, \ldots, W$ 表示已使用的母板宽度
-- Arc $(i, i+w_j)$: 在位置 $i$ 放置宽度为 $w_j$ 的条带
-- 目标: 从节点 0 到节点 W 的最大价值流
+SP2为X列定价问题，对每种条带类型独立求解，寻找能改进主问题目标的新条带切割模式。
 
-**SP2 网络 (长度方向)**:
-- 节点: $0, 1, 2, \ldots, L$ 表示已使用的条带长度
-- Arc $(i, i+l_k)$: 在位置 $i$ 放置长度为 $l_k$ 的子件
-- 每种条带类型有独立的 SP2 网络
+**数学模型** (针对条带类型 $j$):
 
-### 4.2 Arc 数据结构
+$$\max \sum_{i: w_i = w_j} \pi_i \cdot D_i$$
 
-```cpp
-struct SP1ArcFlowData {
-    vector<int> begin_nodes_;           // 起点节点 (位置0)
-    vector<int> end_nodes_;             // 终点节点 (位置W)
-    vector<int> mid_nodes_;             // 中间节点
-    vector<array<int, 2>> arc_list_;    // Arc列表 [起点, 终点]
-    map<array<int, 2>, int> arc_to_index_;
-};
-```
+$$\text{s.t.} \quad \sum_{i: w_i = w_j} l_i \cdot D_i \leq L$$
 
----
+$$D_i \in \mathbb{Z}^+, \quad \forall i$$
 
-## 5. 子问题求解方法
+其中:
+- $D_i$: 该模式中切割 $i$ 型子板的数量
+- $\pi_i$: 需求约束的对偶价格
+- $l_i$: 子板类型 $i$ 的长度
 
-| 方法 | SP1 (宽度) | SP2 (长度) | 复杂度 |
-|------|------------|------------|--------|
-| CPLEX IP | `SolveRootSP1Knapsack` | `SolveRootSP2Knapsack` | 依赖求解器 |
-| Arc Flow | `SolveRootSP1ArcFlow` | `SolveRootSP2ArcFlow` | 依赖求解器 |
-| DP | `SolveRootSP1DP` | `SolveRootSP2DP` | $O(J \cdot W)$ / $O(N \cdot L)$ |
-
-通过 `SPMethod` 枚举选择方法:
-
-```cpp
-enum SPMethod {
-    kCplexIP = 0,   // CPLEX整数规划
-    kArcFlow = 1,   // Arc Flow模型
-    kDP = 2         // 动态规划
-};
-```
+**列生成收敛条件**: 若最优目标值 $\leq v_j$，则无改进X列，该条带类型的SP2收敛。
 
 ---
 
-## 6. Arc 流量分支策略
+## 5. 列生成算法
 
-### 6.1 分支类型
+### 5.1 算法原理
 
-```cpp
-enum BranchType {
-    kBranchNone = 0,    // 无需分支 (整数解)
-    kBranchSP1Arc = 1,  // SP1 Arc 分支 (宽度方向)
-    kBranchSP2Arc = 2   // SP2 Arc 分支 (长度方向)
-};
+列生成是求解大规模线性规划问题的有效方法。其核心思想是:
+
+1. 从一个包含少量初始列的受限主问题 (Restricted Master Problem, RMP) 开始
+2. 求解RMP的LP松弛，获得对偶价格
+3. 利用对偶价格求解子问题，寻找 reduced cost 为正的新列
+4. 若找到改进列，加入RMP并重复；否则算法收敛
+
+### 5.2 Reduced Cost 计算
+
+对于候选新列，其 reduced cost 定义为:
+
+**Y列 (母板模式) 的 reduced cost**:
+
+$$\bar{c}_Y = \sum_{j} v_j \cdot c_j - 1$$
+
+其中 $c_j$ 是该模式产出的 $j$ 型条带数量，1 是Y列的目标函数系数。若 $\bar{c}_Y > 0$，该列能改进目标。
+
+**X列 (条带模式) 的 reduced cost**:
+
+$$\bar{c}_X = \sum_{i} \pi_i \cdot b_i - v_j$$
+
+其中 $b_i$ 是该模式产出的 $i$ 型子板数量，$v_j$ 是X列消耗的条带对应的对偶价格。若 $\bar{c}_X > 0$，该列能改进目标。
+
+### 5.3 列生成流程
+
+```
+1. 初始化: 生成初始可行列
+2. 求解初始主问题 RMP, 获取对偶价格 (v, π)
+3. 循环:
+   3.1 求解 SP1, 获取最优目标值 z₁
+   3.2 若 z₁ > 1:
+       - 将新Y列加入 RMP
+       - 重新求解 RMP, 更新对偶价格
+       - 继续循环
+   3.3 否则 SP1 收敛:
+       - 对每种条带类型 j 求解 SP2, 获取最优目标值 z₂ⱼ
+       - 若存在 z₂ⱼ > vⱼ:
+         - 将新X列加入 RMP
+         - 重新求解 RMP, 更新对偶价格
+         - 继续循环
+       - 否则所有 SP2 都收敛: 列生成结束
+4. 输出: LP 最优解
 ```
 
-### 6.2 分支规则
+### 5.4 初始列生成
 
-若 Arc $(i, j)$ 的流量 $f$ 为分数值:
-- **左分支**: $f_{ij} \leq \lfloor f \rfloor$ (若 $\lfloor f \rfloor = 0$ 则禁用该 Arc)
-- **右分支**: $f_{ij} \geq \lceil f \rceil$
+采用对角矩阵策略生成初始可行解:
+- **Y列**: 每个Y列只切割一种条带类型，生成 $J$ 个Y列
+- **X列**: 对每种条带类型，生成一个只切割一种子板的X列
 
-### 6.3 分支约束继承
-
-子节点继承父节点的所有 Arc 约束:
-
-```cpp
-struct BPNode {
-    // SP1 Arc 约束
-    set<array<int, 2>> sp1_zero_arcs_;          // Arc = 0 (禁用)
-    vector<array<int, 2>> sp1_lower_arcs_;      // Arc <= N
-    vector<array<int, 2>> sp1_greater_arcs_;    // Arc >= N
-
-    // SP2 Arc 约束 (按条带类型)
-    map<int, set<array<int, 2>>> sp2_zero_arcs_;
-    map<int, vector<array<int, 2>>> sp2_lower_arcs_;
-    map<int, vector<array<int, 2>>> sp2_greater_arcs_;
-};
-```
+这种简单策略保证初始主问题可行，且列生成能快速启动。
 
 ---
 
-## 7. 程序结构
+## 6. Arc Flow网络模型
 
-### 7.1 目录结构
+### 6.1 模型动机
+
+Arc Flow 模型将背包问题建模为网络流问题，具有以下优势:
+- 通过网络结构自然表达切割位置和切割顺序
+- 支持 Arc 流量分支，避免对称性问题
+- 可利用网络流算法的特殊结构
+
+### 6.2 SP1 网络结构
+
+**节点定义**:
+- 节点 $0, 1, 2, \ldots, W$ 表示母板宽度的使用位置
+- 节点 0 是起点（母板起始位置）
+- 节点 $W$ 及之前的某些节点是终点（允许浪费部分宽度）
+
+**Arc定义**:
+- Arc $(i, i + w_j)$ 表示在位置 $i$ 放置一个宽度为 $w_j$ 的条带
+- Arc 的价值等于对应条带的对偶价格 $v_j$
+
+**约束**:
+- 流量守恒: 每个中间节点的流入量等于流出量
+- 起点流出量 = 1
+- 终点流入量 = 1
+
+**目标**: 最大化从起点到终点的流量总价值
+
+### 6.3 SP2 网络结构
+
+每种条带类型有独立的 SP2 网络:
+
+**节点定义**:
+- 节点 $0, 1, 2, \ldots, L$ 表示条带长度的使用位置
+- 只有宽度等于该条带宽度的子板才能形成 Arc
+
+**Arc定义**:
+- Arc $(i, i + l_k)$ 表示在位置 $i$ 放置一个长度为 $l_k$ 的子板
+- Arc 的价值等于对应子板的对偶价格 $\pi_k$
+
+### 6.4 解的转换
+
+**Pattern 到 Arc 流量的转换**:
+给定一个切割模式（pattern），可以将其转换为 Arc 网络中的流量分布。例如，若模式切割了 2 个 $j$ 型条带，则从位置 0 出发，经过两个宽度为 $w_j$ 的 Arc 到达某个终点。
+
+**Arc 流量到 Pattern 的转换**:
+给定 Arc 网络的流量解，统计每种 Arc（对应每种条带/子板）被选中的次数，即可还原切割模式。
+
+---
+
+## 7. 分支定价算法
+
+### 7.1 算法框架
+
+分支定价 (Branch and Price) 将列生成嵌入分支定界 (Branch and Bound) 框架:
+
+1. **根节点**: 求解LP松弛问题（通过列生成）
+2. **整数性检查**: 若LP解是整数解，则找到最优解；否则需要分支
+3. **分支**: 选择分数变量，创建左右子节点
+4. **节点处理**: 对每个子节点重新进行列生成
+5. **剪枝**: 若节点下界 >= 当前最优整数解，剪枝
+6. **终止**: 所有节点处理完毕，输出最优整数解
+
+### 7.2 节点数据结构
+
+每个分支定价节点包含:
+- 列池: 继承自父节点，并可能新增列
+- 分支约束: 从父节点继承的所有约束
+- 下界: 该节点LP松弛的最优目标值
+- 解: LP解向量
+
+### 7.3 节点选择策略
+
+本实现采用最佳优先 (Best First) 策略:
+- 优先处理下界最小的节点
+- 有助于尽快找到好的整数解
+- 减少不必要的节点探索
+
+### 7.4 上下界更新
+
+- **下界 (Lower Bound)**: 每个节点的LP最优值是该节点的下界，全局下界是所有待处理节点下界的最小值
+- **上界 (Upper Bound)**: 找到的最好整数解是全局上界
+- **最优性间隙**: $(UB - LB) / UB$，当间隙为0时证明最优
+
+---
+
+## 8. Arc分支策略
+
+### 8.1 传统变量分支的问题
+
+传统的变量分支（对分数解变量 $y_k$ 或 $x_p$ 分支）存在对称性问题:
+- 不同的切割模式可能产生相同的切割效果
+- 列生成中可能生成"等价"的新列
+- 导致搜索树膨胀，效率降低
+
+### 8.2 Arc分支的优势
+
+Arc分支对网络流中的Arc流量进行分支:
+- 直接约束切割的物理位置
+- 避免模式层面的对称性
+- 约束可以传递到子问题中，保证分支的有效性
+
+### 8.3 分支Arc选择
+
+从当前LP解中选择分支Arc的过程:
+
+1. **将Y列解转换为SP1 Arc流量**: 对每个值为分数的Y列，计算其对应的Arc使用情况
+2. **汇总所有Y列的Arc流量**: 得到每个Arc的总流量
+3. **寻找分数流量Arc**: 找到流量为分数值的Arc
+4. **若SP1无分数Arc**: 对每种条带类型检查SP2的Arc流量
+5. **选择"最分数"的Arc**: 选择流量最接近0.5的Arc进行分支
+
+### 8.4 分支规则
+
+设选中的Arc $(i, j)$ 的流量为 $f$:
+
+**左分支**: 限制 Arc 流量 $\leq \lfloor f \rfloor$
+- 若 $\lfloor f \rfloor = 0$，则禁用该 Arc
+- 将约束加入子问题，限制不能使用该 Arc（或限制使用次数）
+
+**右分支**: 限制 Arc 流量 $\geq \lceil f \rceil$
+- 要求该 Arc 至少被使用 $\lceil f \rceil$ 次
+- 在子问题中设置 Arc 变量的下界
+
+### 8.5 约束继承
+
+子节点继承父节点的所有Arc约束:
+
+**SP1 Arc约束**:
+- 禁用Arc集合: 流量设为0的Arc
+- 上界约束: Arc流量 $\leq N$ 的约束
+- 下界约束: Arc流量 $\geq N$ 的约束
+
+**SP2 Arc约束** (按条带类型索引):
+- 每种条带类型独立维护Arc约束
+- 结构与SP1类似
+
+### 8.6 子问题中应用Arc约束
+
+在求解非根节点的子问题时:
+- 对禁用的Arc: 设置变量上界为0
+- 对上界约束: 设置变量上界为约束值
+- 对下界约束: 设置变量下界为约束值
+
+这确保新生成的列满足所有分支约束。
+
+---
+
+## 9. 程序架构
+
+### 9.1 目录结构
 
 ```
 CS-2D-BP-Arc/
-├── CMakeLists.txt              # 构建配置
-├── CMakePresets.json           # 构建预设
-├── data/                       # 测试数据
-├── logs/                       # 运行日志
-├── lp/                         # LP模型文件
+├── CMakeLists.txt              # CMake构建配置
+├── CMakePresets.json           # 构建预设 (vs2022-release等)
+├── README.md                   # 项目文档
+├── data/                       # 测试数据文件
+├── logs/                       # 运行日志输出
+├── lp/                         # LP模型文件导出
 └── src/
-    ├── 2DBP.h                  # 主头文件 (数据结构 + 函数声明)
-    ├── logger.h/cpp            # 日志系统
+    ├── 2DBP.h                  # 主头文件
+    ├── logger.h                # 日志系统头文件
+    ├── logger.cpp              # 日志系统实现
     ├── main.cpp                # 程序入口
-    ├── input.cpp               # 数据读取 + 打印函数
-    ├── arc_flow.cpp            # Arc Flow 网络构建 + 解转换
+    ├── input.cpp               # 数据读取与辅助函数
     ├── heuristic.cpp           # 启发式初始解
-    ├── column_generation.cpp   # 列生成调度
+    ├── arc_flow.cpp            # Arc Flow网络构建
+    ├── column_generation.cpp   # 子问题方法调度
     ├── root_node.cpp           # 根节点主问题
-    ├── root_node_sub.cpp       # 根节点子问题 (SP1 + SP2)
+    ├── root_node_sub.cpp       # 根节点子问题
     ├── new_node.cpp            # 非根节点主问题
     ├── new_node_sub.cpp        # 非根节点子问题
-    └── branch_and_price.cpp    # 分支定价主循环 + Arc分支
+    └── branch_and_price.cpp    # 分支定价主循环
 ```
 
-### 7.2 核心模块
+### 9.2 核心数据结构
 
-| 文件 | 主要函数 | 功能 |
-|------|----------|------|
-| `arc_flow.cpp` | `GenerateSP1Arcs`, `GenerateSP2Arcs` | 构建 Arc Flow 网络 |
-| `arc_flow.cpp` | `ConvertYColsToSP1ArcFlow` | Y列解转Arc流量 |
-| `arc_flow.cpp` | `FindBranchArcSP1`, `FindBranchArcSP2` | 寻找分数流量Arc |
-| `root_node_sub.cpp` | `SolveRootSP1ArcFlow`, `SolveRootSP2ArcFlow` | Arc Flow子问题求解 |
-| `branch_and_price.cpp` | `SelectBranchArc` | 选择分支Arc |
-| `branch_and_price.cpp` | `CreateLeftChild`, `CreateRightChild` | 创建子节点 |
+**问题数据 (ProblemData)**:
+- 子板类型列表: 长度、宽度、需求量
+- 条带类型列表: 宽度、长度
+- 索引映射: 长度/宽度到类型索引的映射
+- Arc网络数据: SP1和SP2的网络结构
 
-### 7.3 全局常量
+**问题参数 (ProblemParams)**:
+- 母板尺寸: 长度、宽度
+- 类型数量: 子板类型数、条带类型数
+- 算法设置: 子问题求解方法
+- 全局最优解: 当前最优整数解
 
-| 常量 | 值 | 含义 |
-|------|-----|------|
-| `kRcTolerance` | $10^{-6}$ | reduced cost 容差 |
-| `kZeroTolerance` | $10^{-10}$ | 浮点零值容差 |
-| `kMaxCgIter` | 100 | 最大列生成迭代次数 |
-| `kExportLp` | false | 是否导出LP文件 |
+**分支节点 (BPNode)**:
+- 节点标识: ID、父节点ID
+- 列池: Y列和X列集合
+- 解: 当前LP解
+- 分支约束: Arc约束集合
+- 状态: 下界、剪枝标记
+
+### 9.3 模块功能
+
+| 模块 | 文件 | 主要功能 |
+|------|------|----------|
+| 数据读取 | input.cpp | 从文件加载问题实例，构建索引 |
+| 初始解 | heuristic.cpp | 生成对角矩阵初始列 |
+| Arc网络 | arc_flow.cpp | 构建SP1/SP2网络，解转换 |
+| 方法调度 | column_generation.cpp | 选择子问题求解方法 |
+| 根节点CG | root_node.cpp, root_node_sub.cpp | 根节点列生成 |
+| 非根节点CG | new_node.cpp, new_node_sub.cpp | 分支节点列生成 |
+| 分支定价 | branch_and_price.cpp | B&P主循环，Arc分支 |
+| 日志系统 | logger.cpp | 双输出流日志 |
+
+### 9.4 子问题求解方法
+
+本项目实现了三种子问题求解方法:
+
+| 方法 | 标识 | 特点 |
+|------|------|------|
+| CPLEX IP | kCplexIP | 通用性好，支持复杂约束 |
+| Arc Flow | kArcFlow | 支持Arc分支约束，推荐用于分支节点 |
+| 动态规划 | kDP | 速度快，但不支持Arc约束 |
+
+### 9.5 算法流程
+
+1. **数据读取**: 加载问题实例，初始化数据结构
+2. **Arc网络生成**: 若使用Arc Flow方法，预先生成网络
+3. **启发式**: 生成初始可行列
+4. **根节点列生成**: 求解LP松弛
+5. **整数性检查**: 判断是否需要分支
+6. **分支定价**: 若需要，执行B&P求解整数最优
+7. **输出结果**: 输出最优解和统计信息
 
 ---
 
-## 8. 构建与运行
+## 10. 构建与运行
 
-### 构建
+### 10.1 环境要求
+
+- Windows 10/11 x64
+- Visual Studio 2022 (MSVC编译器)
+- CMake 3.24+
+- IBM CPLEX 22.1.0
+
+### 10.2 CPLEX配置
+
+确保CPLEX安装在 `D:/CPLEX` 目录，或修改CMakeLists.txt中的路径:
+- 头文件: `D:/CPLEX/cplex/include`, `D:/CPLEX/concert/include`
+- 库文件: `D:/CPLEX/cplex/lib/x64_windows_msvc14/stat_mda`
+
+### 10.3 构建命令
 
 ```bash
+# 配置
 cmake --preset vs2022-release
+
+# 编译
 cmake --build --preset release
 ```
 
-### 运行
+### 10.4 运行
 
 ```bash
 ./build/release/bin/Release/2DBP.exe
 ```
 
----
+### 10.5 输入文件格式
 
-## 9. 输入格式
+数据文件为制表符分隔的文本文件:
 
 ```
-第1行: 母板数量
-第2行: 子件类型数量
+第1行: (保留)
+第2行: 子板类型数量
 第3行: 母板长度 <TAB> 母板宽度
-第4行起: 子件长度 <TAB> 子件宽度 <TAB> 需求量 <TAB> 类型索引
+第4行起: 子板长度 <TAB> 子板宽度 <TAB> 需求量
 ```
 
----
+### 10.6 输出说明
 
-## 10. 与其他项目的关系
-
-| 项目 | 维度 | 子问题方法 | 分支策略 |
-|------|------|------------|----------|
-| CS-1D-BP | 1D | CPLEX IP | 变量分支 |
-| CS-1D-BP-Arc | 1D | Arc Flow | Arc流量分支 |
-| CS-1D-BP-Arc-DP | 1D | Arc Flow + DP | Arc流量分支 |
-| CS-2D-BP | 2D | CPLEX IP | 变量分支 |
-| **CS-2D-BP-Arc** | 2D | CPLEX IP + Arc Flow + DP | Arc流量分支 |
+程序输出包括:
+- 求解过程日志 (同时输出到控制台和日志文件)
+- 最优目标值 (使用的母板数量)
+- 最优切割方案 (Y列和X列的使用情况)
+- 求解统计 (迭代次数、节点数、耗时)
 
 ---
 
 ## 11. 参考文献
 
-- Gilmore, P.C., Gomory, R.E. (1965). Multistage cutting stock problems of two and more dimensions. *Operations Research*.
-- Valerio de Carvalho, J.M. (1999). Exact solution of bin-packing problems using column generation and branch-and-bound. *Annals of Operations Research*.
-- Barnhart, C., et al. (1998). Branch-and-price: Column generation for solving huge integer programs. *Operations Research*.
+1. Gilmore, P.C., Gomory, R.E. (1961). A linear programming approach to the cutting-stock problem. *Operations Research*, 9(6), 849-859.
+
+2. Gilmore, P.C., Gomory, R.E. (1965). Multistage cutting stock problems of two and more dimensions. *Operations Research*, 13(1), 94-120.
+
+3. Valerio de Carvalho, J.M. (1999). Exact solution of bin-packing problems using column generation and branch-and-bound. *Annals of Operations Research*, 86, 629-659.
+
+4. Barnhart, C., Johnson, E.L., Nemhauser, G.L., Savelsbergh, M.W.P., Vance, P.H. (1998). Branch-and-price: Column generation for solving huge integer programs. *Operations Research*, 46(3), 316-329.
+
+5. Vanderbeck, F. (2000). On Dantzig-Wolfe decomposition in integer programming and ways to perform branching in a branch-and-price algorithm. *Operations Research*, 48(1), 111-128.
+
+---
+
+## 相关项目
+
+| 项目 | 问题维度 | 子问题方法 | 分支策略 |
+|------|----------|------------|----------|
+| CS-1D-BP | 一维 | CPLEX IP | 变量分支 |
+| CS-1D-BP-Arc | 一维 | Arc Flow | Arc分支 |
+| CS-1D-BP-Arc-DP | 一维 | Arc Flow + DP | Arc分支 |
+| CS-2D-BP | 二维 | CPLEX IP | 变量分支 |
+| **CS-2D-BP-Arc** | 二维 | CPLEX IP + Arc Flow + DP | Arc分支 |
