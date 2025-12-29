@@ -430,7 +430,7 @@ int RunBranchAndPrice(ProblemParams& params, ProblemData& data, BPNode* root) {
             curr = curr->next_;
         }
 
-        // 检查时间限制
+        // 检查时间限制 (主要控制手段)
         auto current_time = chrono::high_resolution_clock::now();
         auto elapsed = chrono::duration_cast<chrono::seconds>(
             current_time - bp_start_time).count();
@@ -439,9 +439,9 @@ int RunBranchAndPrice(ProblemParams& params, ProblemData& data, BPNode* root) {
             break;
         }
 
-        // 安全检查: 防止无限循环
-        if (node_count > 100) {
-            LOG("[BP] 达到最大节点数, 强制终止");
+        // 检查节点数限制 (可选的安全阀)
+        if (kMaxBPNodes > 0 && node_count > kMaxBPNodes) {
+            LOG_FMT("[BP] 达到最大节点数 (%d), 强制终止\n", kMaxBPNodes);
             break;
         }
     }

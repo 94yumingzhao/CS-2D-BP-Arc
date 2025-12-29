@@ -52,13 +52,21 @@ using namespace std;
 constexpr double kRcTolerance = 1.0e-6;     // 检验数 (Reduced Cost) 容差
                                             // RC > 1 + kRcTolerance 才认为找到改进列
 constexpr double kZeroTolerance = 1.0e-10;  // 零值容差，|x| < kZeroTolerance 视为 0
-constexpr int kMaxCgIter = 100;             // 列生成最大迭代次数，防止无限循环
+
+// 算法控制参数
+constexpr int kMaxBPTimeSec = 60;           // 分支定价最大运行时间 (秒)，超时输出当前最优解
+                                            // 调试建议: 5秒快速测试, 30秒常规, 300秒深度测试
+constexpr int kMaxCgIter = 100;             // 列生成最大迭代次数 (安全阀，防止死循环)
+                                            // 正常应 5-30 次收敛，超过50次可能算例过大
+constexpr int kMaxBPNodes = -1;             // 分支树最大节点数 (-1 表示不限制，由时间控制)
+                                            // 调试建议: -1 (不限制) 或 1000 (宽松限制)
+
+// 文件路径配置
 const string kDataDir = "../CS-2D-Data/data/";  // 算例数据目录 (CS-2D-Data输出)
 const string kFilePattern = "inst_";            // 算例文件名前缀
 const string kLogDir = "logs/";             // 日志输出目录
 const string kLpDir = "lp/";                // LP 文件输出目录 (调试用)
 constexpr bool kExportLp = false;           // 是否导出 LP 文件，开启会降低性能
-constexpr int kMaxBPTimeSec = 30;           // 分支定价最大运行时间 (秒)，超时输出当前最优解
 
 // 子问题求解方法枚举
 // 三种方法各有特点:
@@ -347,7 +355,8 @@ void PrintSP2ArcFlowSolution(map<int, tuple<int, int, double>>& solution, int st
 
 // 输入输出函数 (input.cpp)
 void SplitString(const string& s, vector<string>& v, const string& c);
-tuple<int, int, int> LoadInput(ProblemParams& params, ProblemData& data);
+tuple<int, int, int> LoadInput(ProblemParams& params, ProblemData& data,
+                                const string& specified_file = "");
 void BuildLengthIndex(ProblemData& data);
 void BuildWidthIndex(ProblemData& data);
 

@@ -21,7 +21,31 @@
 
 using namespace std;
 
-int main() {
+void PrintUsage(const char* program) {
+    cout << "Usage: " << program << " [options]\n";
+    cout << "Options:\n";
+    cout << "  -f, --file <path>   Specify instance file path\n";
+    cout << "  -h, --help          Show this help message\n";
+    cout << "\nIf no file is specified, the latest instance in " << kDataDir << " will be used.\n";
+}
+
+int main(int argc, char* argv[]) {
+    // 解析命令行参数
+    string instance_file = "";
+    for (int i = 1; i < argc; i++) {
+        string arg = argv[i];
+        if (arg == "-h" || arg == "--help") {
+            PrintUsage(argv[0]);
+            return 0;
+        } else if ((arg == "-f" || arg == "--file") && i + 1 < argc) {
+            instance_file = argv[++i];
+        } else {
+            cerr << "Unknown option: " << arg << "\n";
+            PrintUsage(argv[0]);
+            return 1;
+        }
+    }
+
     // 创建输出目录 (日志和LP文件)
     filesystem::create_directories("logs");
     filesystem::create_directories("lp");
@@ -62,7 +86,7 @@ int main() {
     LOG("[阶段1] 数据读取与预处理");
     LOG("------------------------------------------------------------");
 
-    auto [status, num_items, num_strips] = LoadInput(params, data);
+    auto [status, num_items, num_strips] = LoadInput(params, data, instance_file);
     if (status != 0) {
         LOG("[错误] 数据读取失败");
         return 1;

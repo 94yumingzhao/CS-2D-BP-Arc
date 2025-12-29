@@ -2,7 +2,7 @@
 //
 // 本文件实现双输出流日志系统, 支持:
 // - 同时输出到控制台和日志文件
-// - 每行自动添加时间戳 (精确到毫秒)
+// - 每行自动添加时间戳 (精确到秒)
 // - 日志文件自动创建和目录管理
 //
 // 核心类:
@@ -30,13 +30,11 @@ DualStreambuf::DualStreambuf(streambuf* console_buf, streambuf* file_buf)
 }
 
 // 获取当前时间戳字符串
-// 格式: [YYYY-MM-DD HH:MM:SS.mmm]
+// 格式: [YYYY-MM-DD HH:MM:SS]
 // 返回值: 格式化的时间戳字符串
 string DualStreambuf::GetCurrentTimestamp() {
     auto now = chrono::system_clock::now();
     auto time_t_val = chrono::system_clock::to_time_t(now);
-    auto ms = chrono::duration_cast<chrono::milliseconds>(
-        now.time_since_epoch()) % 1000;  // 毫秒部分
 
     tm tm_buf;
 #ifdef _WIN32
@@ -46,8 +44,7 @@ string DualStreambuf::GetCurrentTimestamp() {
 #endif
 
     stringstream ss;
-    ss << "[" << put_time(&tm_buf, "%Y-%m-%d %H:%M:%S")
-       << "." << setfill('0') << setw(3) << ms.count() << "] ";
+    ss << "[" << put_time(&tm_buf, "%Y-%m-%d %H:%M:%S") << "] ";
     return ss.str();
 }
 

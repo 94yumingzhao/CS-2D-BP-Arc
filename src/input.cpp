@@ -90,23 +90,33 @@ string GetLatestInstanceFile(const string& data_dir) {
 
 // 读取问题数据 (2DPackLib CSV 格式)
 // 功能: 从 CSV 文件读取二维下料问题实例
+// 输入:
+//   - specified_file: 指定算例文件路径 (空字符串则自动选择最新文件)
 // 输出:
 //   - params: 问题参数 (尺寸, 数量等)
 //   - data: 问题数据 (子板类型, 条带类型等)
 // 返回值: (状态码, 子板类型数, 条带类型数)
 //   状态码: 0=成功, -1=失败
-tuple<int, int, int> LoadInput(ProblemParams& params, ProblemData& data) {
+tuple<int, int, int> LoadInput(ProblemParams& params, ProblemData& data,
+                                const string& specified_file) {
     string line;
     vector<string> tokens;
 
-    // 自动选择最新的算例文件
-    string file_path = GetLatestInstanceFile(kDataDir);
-    if (file_path.empty()) {
-        LOG("[错误] 未找到算例文件");
-        return make_tuple(-1, 0, 0);
+    // 确定要读取的文件路径
+    string file_path;
+    if (!specified_file.empty()) {
+        // 使用指定的文件
+        file_path = specified_file;
+        LOG_FMT("[数据] 使用指定文件: %s\n", file_path.c_str());
+    } else {
+        // 自动选择最新的算例文件
+        file_path = GetLatestInstanceFile(kDataDir);
+        if (file_path.empty()) {
+            LOG("[错误] 未找到算例文件");
+            return make_tuple(-1, 0, 0);
+        }
+        LOG_FMT("[数据] 使用最新文件: %s\n", file_path.c_str());
     }
-
-    LOG_FMT("[数据] 读取文件: %s\n", file_path.c_str());
 
     ifstream fin(file_path.c_str());
     if (!fin) {

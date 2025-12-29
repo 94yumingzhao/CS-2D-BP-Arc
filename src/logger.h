@@ -48,7 +48,7 @@ private:
     std::streambuf* file_buf_;      // 文件缓冲区指针
     bool need_timestamp_;           // 标记: 下一个字符是否需要时间戳
 
-    // 获取当前时间戳 "[YYYY-MM-DD HH:MM:SS.mmm] "
+    // 获取当前时间戳 "[YYYY-MM-DD HH:MM:SS] "
     std::string GetCurrentTimestamp();
 
     // 向两个缓冲区写入时间戳
@@ -83,12 +83,10 @@ private:
 
 
 // 获取时间戳字符串 (用于文件名)
-// 返回格式: YYYYMMDD_HHMMSS_mmm
+// 返回格式: YYYYMMDD_HHMMSS
 inline std::string GetTimestampString() {
     auto now = std::chrono::system_clock::now();
     auto time_t_val = std::chrono::system_clock::to_time_t(now);
-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-        now.time_since_epoch()) % 1000;
 
     std::tm tm_buf;
 #ifdef _WIN32
@@ -98,8 +96,7 @@ inline std::string GetTimestampString() {
 #endif
 
     std::stringstream ss;
-    ss << std::put_time(&tm_buf, "%Y%m%d_%H%M%S")
-       << "_" << std::setfill('0') << std::setw(3) << ms.count();
+    ss << std::put_time(&tm_buf, "%Y%m%d_%H%M%S");
     return ss.str();
 }
 
