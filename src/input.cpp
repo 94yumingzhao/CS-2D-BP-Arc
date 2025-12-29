@@ -118,6 +118,9 @@ tuple<int, int, int> LoadInput(ProblemParams& params, ProblemData& data,
         LOG_FMT("[数据] 使用最新文件: %s\n", file_path.c_str());
     }
 
+    // 保存算例文件名到params（用于输出JSON）
+    params.instance_file_ = file_path;
+
     ifstream fin(file_path.c_str());
     if (!fin) {
         LOG_FMT("[错误] 无法打开文件: %s\n", file_path.c_str());

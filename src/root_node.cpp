@@ -108,6 +108,9 @@ void SolveRootCG(ProblemParams& params, ProblemData& data, BPNode& root_node) {
         // 求解最终主问题, 提取完整解
         SolveRootFinalMP(params, data, env, model, obj, cons, vars,
                          cplex, root_node);
+
+        // 保存根节点下界到params（用于输出JSON）
+        params.root_lb_ = root_node.lower_bound_;
     }
 
     // std::cout << "[CG] Root CG complete\n";  // 临时注释掉，测试是否能继续

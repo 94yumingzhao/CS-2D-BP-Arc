@@ -274,6 +274,10 @@ struct ProblemParams {
     int stock_length_ = -1;             // 母板长度 (L，沿 X 轴)
     int stock_width_ = -1;              // 母板宽度 (W，沿 Y 轴)
 
+    // 算例信息
+    string instance_file_ = "";         // 算例文件名
+    double root_lb_ = 0.0;              // 根节点下界
+
     // 子问题求解方法设置
     int sp1_method_ = kCplexIP;         // SP1 默认求解方法
     int sp2_method_ = kCplexIP;         // SP2 默认求解方法
