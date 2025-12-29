@@ -101,19 +101,15 @@ inline std::string GetTimestampString() {
 }
 
 
-// 日志输出宏
+// 日志输出宏 - 临时禁用所有日志，避免崩溃
 
 // 带换行的日志输出
-#define LOG(msg) std::cout << msg << std::endl
+#define LOG(msg) do { } while(0)
 
 // 不带换行的日志输出
-#define LOG_NO_NL(msg) std::cout << msg
+#define LOG_NO_NL(msg) do { } while(0)
 
 // 格式化日志输出
-#define LOG_FMT(fmt, ...) do { \
-    char _log_buf[1024]; \
-    snprintf(_log_buf, sizeof(_log_buf), fmt, ##__VA_ARGS__); \
-    std::cout << _log_buf; \
-} while(0)
+#define LOG_FMT(fmt, ...) do { } while(0)
 
 #endif  // LOGGER_H_

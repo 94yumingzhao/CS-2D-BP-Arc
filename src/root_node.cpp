@@ -67,7 +67,8 @@ void SolveRootCG(ProblemParams& params, ProblemData& data, BPNode& root_node) {
 
             // 检查最大迭代次数限制
             if (root_node.iter_ >= kMaxCgIter) {
-                LOG_FMT("[CG] 达到最大迭代次数 %d, 终止\n", kMaxCgIter);
+                LOG_FMT("[CG] 警告: 达到最大迭代次数 %d (异常), 强制终止\n", kMaxCgIter);
+                LOG("[CG]    正常应该收敛, 请检查算法或降低 kMaxCgIter 以更早发现问题");
                 break;
             }
 
@@ -109,6 +110,8 @@ void SolveRootCG(ProblemParams& params, ProblemData& data, BPNode& root_node) {
                          cplex, root_node);
     }
 
+    // std::cout << "[CG] Root CG complete\n";  // 临时注释掉，测试是否能继续
+
     // 释放CPLEX资源
     cplex.end();
     obj.end();
@@ -116,8 +119,6 @@ void SolveRootCG(ProblemParams& params, ProblemData& data, BPNode& root_node) {
     cons.end();
     model.end();
     env.end();
-
-    LOG("[CG] 根节点列生成结束");
 }
 
 // 求解根节点初始主问题
@@ -184,6 +185,7 @@ bool SolveRootInitMP(ProblemParams& params, ProblemData& data,
         string var_name = "Y_" + to_string(col + 1);
         IloNumVar var(cplex_col, 0, IloInfinity, ILOFLOAT, var_name.c_str());
         vars.add(var);
+        root_node.y_columns_[col].var_index_ = col;  // 记录在vars中的索引
         cplex_col.end();
     }
 
@@ -206,6 +208,7 @@ bool SolveRootInitMP(ProblemParams& params, ProblemData& data,
         string var_name = "X_" + to_string(col + 1);
         IloNumVar var(cplex_col, 0, IloInfinity, ILOFLOAT, var_name.c_str());
         vars.add(var);
+        root_node.x_columns_[col].var_index_ = num_y_cols + col;  // 记录在vars中的索引
         cplex_col.end();
     }
 
@@ -277,6 +280,7 @@ bool SolveRootUpdateMP(ProblemParams& params, ProblemData& data,
         YColumn y_col;
         y_col.pattern_ = node.new_y_col_.pattern_;
         y_col.arc_set_ = node.new_y_col_.arc_set_;  // Arc集合 (用于Arc分支)
+        y_col.var_index_ = vars.getSize() - 1;      // 记录该列在vars中的索引
         node.y_columns_.push_back(y_col);
 
         // 清空临时存储
@@ -310,6 +314,7 @@ bool SolveRootUpdateMP(ProblemParams& params, ProblemData& data,
         x_col.strip_type_id_ = strip_type;
         x_col.pattern_ = node.new_x_col_.pattern_;
         x_col.arc_set_ = node.new_x_col_.arc_set_;  // Arc集合 (用于Arc分支)
+        x_col.var_index_ = vars.getSize() - 1;      // 记录该列在vars中的索引
         node.x_columns_.push_back(x_col);
 
         // 清空临时存储
@@ -379,11 +384,18 @@ bool SolveRootFinalMP(ProblemParams& params, ProblemData& data,
 
     LOG_FMT("[MP] 最终目标值: %.4f\n", obj_val);
 
-    // 提取Y列的解值
+    // 提取Y列的解值 - 使用var_index_正确访问vars数组
     // Y列对应母板切割模式, 其值表示该模式的使用次数
     node.solution_.y_columns_.clear();
     for (int col = 0; col < (int)node.y_columns_.size(); col++) {
-        double val = cplex.getValue(vars[col]);
+        int var_idx = node.y_columns_[col].var_index_;
+        if (var_idx < 0 || var_idx >= vars.getSize()) {
+            fprintf(stderr, "[ERROR] Y column %d has invalid var_index=%d (vars.size=%d)\n",
+                    col, var_idx, vars.getSize());
+            continue;
+        }
+
+        double val = cplex.getValue(vars[var_idx]);
         if (fabs(val) < kZeroTolerance) val = 0;  // 处理数值误差
 
         YColumn y_col = node.y_columns_[col];
@@ -392,25 +404,26 @@ bool SolveRootFinalMP(ProblemParams& params, ProblemData& data,
 
         // 输出非零解
         if (val > kZeroTolerance) {
-            LOG_FMT("  Y_%d = %.4f\n", col + 1, val);
+            fprintf(stderr, "  Y_%d = %.4f (var_idx=%d)\n", col + 1, val, var_idx);
         }
     }
 
-    // 提取X列的解值
-    // X列对应条带切割模式, 其值表示该模式的使用次数
+    // 提取X列的解值 - 使用var_index_正确访问vars数组
     node.solution_.x_columns_.clear();
-    int y_count = static_cast<int>(node.y_columns_.size());
     for (int col = 0; col < (int)node.x_columns_.size(); col++) {
-        double val = cplex.getValue(vars[y_count + col]);
+        int var_idx = node.x_columns_[col].var_index_;
+        if (var_idx < 0 || var_idx >= vars.getSize()) {
+            fprintf(stderr, "[ERROR] X column %d has invalid var_index=%d (vars.size=%d)\n",
+                    col, var_idx, vars.getSize());
+            continue;
+        }
+
+        double val = cplex.getValue(vars[var_idx]);
         if (fabs(val) < kZeroTolerance) val = 0;
 
         XColumn x_col = node.x_columns_[col];
         x_col.value_ = val;
         node.solution_.x_columns_.push_back(x_col);
-
-        if (val > kZeroTolerance) {
-            LOG_FMT("  X_%d = %.4f\n", col + 1, val);
-        }
     }
 
     return true;

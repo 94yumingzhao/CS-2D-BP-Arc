@@ -1,0 +1,10 @@
+# 2DPackLib CSV Format - Simple test case
+# 3 items, 2 strip types
+#
+stock_width,stock_height
+400,200
+#
+id,width,height,demand
+0,150,80,2
+1,100,80,2
+2,100,60,2

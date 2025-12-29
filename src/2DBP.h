@@ -166,6 +166,7 @@ struct YColumn {
     vector<int> pattern_;               // pattern_[j] = 该方案中条带类型 j 的产出数量
     set<array<int, 2>> arc_set_;        // 对应的 SP1 Arc 集合 (宽度方向)
     double value_ = 0.0;                // LP 解中该列的取值
+    int var_index_ = -1;                // 该列在 IloNumVarArray vars 中的索引位置
 };
 
 // X 列结构体 (第二阶段切割方案)
@@ -175,6 +176,7 @@ struct XColumn {
     vector<int> pattern_;               // pattern_[i] = 该方案中子板类型 i 的产出数量
     set<array<int, 2>> arc_set_;        // 对应的 SP2 Arc 集合 (长度方向)
     double value_ = 0.0;                // LP 解中该列的取值
+    int var_index_ = -1;                // 该列在 IloNumVarArray vars 中的索引位置
 };
 
 // 节点解结构体

@@ -121,15 +121,18 @@ int main(int argc, char* argv[]) {
     if (is_integer) {
         // LP解恰好为整数, 无需分支
         LOG("[结果] 根节点解为整数解, 无需分支");
+        fprintf(stderr, "[DEBUG] Integer solution found, exporting...\n");
         params.global_best_int_ = root_node.solution_.obj_val_;
         params.global_best_y_cols_ = root_node.solution_.y_columns_;
         params.global_best_x_cols_ = root_node.solution_.x_columns_;
 
         // 导出根节点解 (供测试可视化)
         ExportSolution(params, data);
+        fprintf(stderr, "[DEBUG] Export complete\n");
     } else {
         // LP解为分数, 需要分支定价求整数解
         LOG("[结果] 根节点解非整数, 需要分支定价");
+        fprintf(stderr, "[DEBUG] Fractional solution (LP=%.4f), starting B&P...\n", root_node.solution_.obj_val_);
 
         // 阶段5: 分支定价
         LOG("------------------------------------------------------------");
@@ -137,10 +140,15 @@ int main(int argc, char* argv[]) {
         LOG("------------------------------------------------------------");
 
         RunBranchAndPrice(params, data, &root_node);
+        fprintf(stderr, "[DEBUG] B&P complete, best_int=%.4f\n", params.global_best_int_);
 
         // 导出最优解 (供 CS-2D-Fig 可视化)
         if (params.global_best_int_ < INFINITY) {
+            fprintf(stderr, "[DEBUG] Exporting solution...\n");
             ExportSolution(params, data);
+            fprintf(stderr, "[DEBUG] Export complete\n");
+        } else {
+            fprintf(stderr, "[DEBUG] No integer solution found\n");
         }
     }
 

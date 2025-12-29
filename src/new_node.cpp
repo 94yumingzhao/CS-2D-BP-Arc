@@ -60,7 +60,8 @@ int SolveNodeCG(ProblemParams& params, ProblemData& data, BPNode* node) {
 
         // 检查最大迭代次数限制
         if (node->iter_ >= kMaxCgIter) {
-            LOG_FMT("[CG] 达到最大迭代次数 %d, 终止\n", kMaxCgIter);
+            LOG_FMT("[CG] 警告: 达到最大迭代次数 %d (异常), 强制终止\n", kMaxCgIter);
+            LOG("[CG]    正常应该收敛, 请检查算法或降低 kMaxCgIter 以更早发现问题");
             break;
         }
 
