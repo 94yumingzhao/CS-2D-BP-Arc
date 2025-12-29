@@ -1,115 +1,29 @@
-// logger.cpp - 日志系统实现
+// logger.cpp - 日志系统实现（改进版）
 //
-// 本文件实现双输出流日志系统, 支持:
-// - 同时输出到控制台和日志文件
-// - 每行自动添加时间戳 (精确到秒)
-// - 日志文件自动创建和目录管理
+// 改进内容:
+// 1. 移除DualStreambuf，避免流重定向
+// 2. 纯文件输出，与CPLEX完全隔离
+// 3. 线程安全：使用mutex保护文件写入
+// 4. 自动flush：确保崩溃时日志不丢失
+// 5. 批量写入：性能优于逐字符处理
 //
-// 核心类:
-// - DualStreambuf: 双输出流缓冲区, 实现同时写入控制台和文件
-// - Logger: 日志管理器, 封装初始化和清理逻辑
-//
-// 使用方式:
-// 1. 在main()开头创建Logger对象
-// 2. 使用LOG/LOG_FMT宏输出日志
-// 3. Logger析构时自动恢复标准输出并关闭日志文件
+// 核心设计:
+// - Logger::Write(): 线程安全的文件写入
+// - Logger::WriteFormat(): 格式化输出（类似printf）
+// - g_logger全局指针：方便宏访问
+// - 不修改cout/cerr：避免与CPLEX冲突
 
 #include "logger.h"
 
 using namespace std;
 
-// DualStreambuf构造函数
-// 功能: 初始化双输出流缓冲区
-// 参数:
-//   - console_buf: 控制台输出缓冲区 (通常为cout.rdbuf())
-//   - file_buf: 文件输出缓冲区 (日志文件的rdbuf)
-DualStreambuf::DualStreambuf(streambuf* console_buf, streambuf* file_buf)
-    : console_buf_(console_buf)
-    , file_buf_(file_buf)
-    , need_timestamp_(true) {  // 每行开头需要时间戳
-}
+// 全局Logger指针定义
+Logger* g_logger = nullptr;
 
-// 获取当前时间戳字符串
-// 格式: [YYYY-MM-DD HH:MM:SS]
-// 返回值: 格式化的时间戳字符串
-string DualStreambuf::GetCurrentTimestamp() {
-    auto now = chrono::system_clock::now();
-    auto time_t_val = chrono::system_clock::to_time_t(now);
-
-    tm tm_buf;
-#ifdef _WIN32
-    localtime_s(&tm_buf, &time_t_val);  // Windows线程安全版本
-#else
-    localtime_r(&time_t_val, &tm_buf);  // POSIX线程安全版本
-#endif
-
-    stringstream ss;
-    ss << "[" << put_time(&tm_buf, "%Y-%m-%d %H:%M:%S") << "] ";
-    return ss.str();
-}
-
-// 写入时间戳到两个缓冲区
-// 功能: 在每行开头输出时间戳
-void DualStreambuf::WriteTimestamp() {
-    string timestamp = GetCurrentTimestamp();
-
-    // 写入控制台
-    if (console_buf_) {
-        console_buf_->sputn(timestamp.c_str(), timestamp.length());
-    }
-
-    // 写入日志文件
-    if (file_buf_) {
-        file_buf_->sputn(timestamp.c_str(), timestamp.length());
-    }
-}
-
-// 单字符输出处理 (streambuf虚函数)
-// 功能: 处理每个输出字符, 在行首添加时间戳
-// 参数: c - 输出字符
-// 返回值: 输出的字符, EOF表示错误
-int DualStreambuf::overflow(int c) {
-    if (c != EOF) {
-        // 如果需要时间戳 (行首), 先输出时间戳
-        if (need_timestamp_) {
-            WriteTimestamp();
-            need_timestamp_ = false;
-        }
-
-        // 输出字符到两个缓冲区
-        if (console_buf_) {
-            console_buf_->sputc(c);
-        }
-        if (file_buf_) {
-            file_buf_->sputc(c);
-        }
-
-        // 换行符后, 下一个字符需要时间戳
-        if (c == '\n') {
-            need_timestamp_ = true;
-        }
-    }
-    return c;
-}
-
-// 批量字符输出处理 (streambuf虚函数)
-// 功能: 批量输出字符串, 逐字符处理以保证时间戳正确
-// 参数: s - 字符串指针, count - 字符数
-// 返回值: 实际输出的字符数
-streamsize DualStreambuf::xsputn(const char* s, streamsize count) {
-    for (streamsize i = 0; i < count; ++i) {
-        overflow(s[i]);  // 逐字符处理
-    }
-    return count;
-}
-
-// Logger构造函数 - 初始化日志系统
-// 功能: 创建日志文件, 替换cout缓冲区为双输出缓冲区
-// 参数: log_prefix - 日志文件路径前缀 (自动添加.log后缀)
-Logger::Logger(const string& log_prefix)
-    : old_cout_buf_(nullptr)
-    , dual_buf_(nullptr) {
-
+// Logger构造函数
+// 功能: 创建日志文件，初始化日志系统
+// 参数: log_prefix - 日志文件路径前缀（自动添加.log后缀）
+Logger::Logger(const string& log_prefix) {
     log_file_path_ = log_prefix + ".log";
 
     // 确保日志文件所在目录存在
@@ -118,33 +32,102 @@ Logger::Logger(const string& log_prefix)
         filesystem::create_directories(log_path.parent_path());
     }
 
-    // 打开日志文件 (覆盖模式)
+    // 打开日志文件（覆盖模式）
     log_file_.open(log_file_path_, ios::out | ios::trunc);
 
-    if (log_file_.is_open()) {
-        // 保存原始cout缓冲区, 用于析构时恢复
-        old_cout_buf_ = cout.rdbuf();
-        // 创建双输出缓冲区
-        dual_buf_ = make_unique<DualStreambuf>(old_cout_buf_, log_file_.rdbuf());
-        // 替换cout缓冲区
-        cout.rdbuf(dual_buf_.get());
+    if (!log_file_.is_open()) {
+        fprintf(stderr, "[ERROR] 无法创建日志文件: %s\n", log_file_path_.c_str());
+    }
+
+    // 设置全局Logger指针
+    g_logger = this;
+}
+
+// Logger析构函数
+// 功能: 关闭日志文件，清空全局指针
+Logger::~Logger() {
+    try {
+        // 关闭日志文件
+        if (log_file_.is_open()) {
+            log_file_.flush();
+            log_file_.close();
+        }
+
+        // 清空全局指针
+        if (g_logger == this) {
+            g_logger = nullptr;
+        }
+    } catch (...) {
+        // 忽略析构过程中的异常，避免程序崩溃
     }
 }
 
-// Logger析构函数 - 恢复标准输出并关闭日志文件
-// 功能: 恢复cout原始缓冲区, 关闭日志文件
-Logger::~Logger() {
-    try {
-        // 恢复原始cout缓冲区
-        if (old_cout_buf_) {
-            cout.rdbuf(old_cout_buf_);
-        }
+// 获取当前时间戳
+// 格式: [YYYY-MM-DD HH:MM:SS]
+// 返回值: 格式化的时间戳字符串
+string Logger::GetTimestamp() {
+    auto now = chrono::system_clock::now();
+    auto time_t_val = chrono::system_clock::to_time_t(now);
 
-        // 关闭日志文件
-        if (log_file_.is_open()) {
-            log_file_.close();
-        }
-    } catch (...) {
-        // 忽略析构过程中的异常, 避免程序崩溃
+    tm tm_buf;
+#ifdef _WIN32
+    localtime_s(&tm_buf, &time_t_val);
+#else
+    localtime_r(&time_t_val, &tm_buf);
+#endif
+
+    stringstream ss;
+    ss << "[" << put_time(&tm_buf, "%Y-%m-%d %H:%M:%S") << "] ";
+    return ss.str();
+}
+
+// 写入日志消息（带时间戳）
+// 功能: 线程安全地写入日志文件
+// 参数: msg - 日志消息
+// 说明:
+//   - 自动添加时间戳
+//   - 立即flush，确保崩溃时不丢日志
+//   - 线程安全
+void Logger::Write(const string& msg) {
+    if (!log_file_.is_open()) {
+        return;
     }
+
+    // 线程安全：加锁保护文件写入
+    lock_guard<mutex> lock(mutex_);
+
+    try {
+        // 写入时间戳 + 消息
+        string timestamp = GetTimestamp();
+        log_file_ << timestamp << msg;
+
+        // 立即flush，确保日志写入磁盘
+        log_file_.flush();
+    } catch (const exception& e) {
+        // 捕获异常，避免日志错误导致程序崩溃
+        fprintf(stderr, "[ERROR] 日志写入失败: %s\n", e.what());
+    }
+}
+
+// 格式化写入日志
+// 功能: 类似printf的格式化日志输出
+// 参数: fmt - 格式化字符串, ... - 参数列表
+// 说明:
+//   - 支持printf风格的格式化
+//   - 自动添加时间戳
+//   - 线程安全
+void Logger::WriteFormat(const char* fmt, ...) {
+    if (!log_file_.is_open()) {
+        return;
+    }
+
+    // 格式化字符串
+    char buffer[4096];  // 缓冲区大小：4KB
+    va_list args;
+    va_start(args, fmt);
+    vsnprintf(buffer, sizeof(buffer), fmt, args);
+    va_end(args);
+
+    // 调用Write写入（自动加时间戳和flush）
+    Write(buffer);
 }

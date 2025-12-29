@@ -1,68 +1,47 @@
-// =============================================================================
-// logger.h - 日志系统头文件
-// =============================================================================
-// 功能: 提供双输出日志功能 (终端 + 文件同步输出)
+// logger.h - 日志系统头文件（改进版）
+//
+// 功能: 提供安全的文件日志功能
+//
+// 改进点:
+// 1. 纯文件输出，避免流重定向导致的崩溃
+// 2. 不修改全局cout状态，与CPLEX完全隔离
+// 3. 线程安全的文件写入
+// 4. 批量写入提升性能
+// 5. 自动flush确保崩溃时不丢日志
 //
 // 使用方式:
 //   int main() {
-//       Logger logger("output/run_log");  // 自动重定向 cout
-//       cout << "[启动] 程序开始运行\n";  // 同时输出到控制台和文件
-//   }  // 析构时自动恢复 cout
-// =============================================================================
+//       Logger logger("logs/run_log");  // 创建日志文件
+//       LOG("程序开始运行");              // 写入日志文件
+//       LOG_FMT("处理 %d 个任务\n", 100); // 格式化日志
+//   }  // 析构时自动关闭日志文件
 
 #ifndef LOGGER_H_
 #define LOGGER_H_
 
-#include <iostream>
 #include <fstream>
-#include <sstream>
 #include <string>
-#include <memory>
 #include <chrono>
 #include <iomanip>
 #include <ctime>
+#include <sstream>
+#include <mutex>
 #include <filesystem>
+#include <cstdio>
+#include <cstdarg>
 
-
-// 双输出流缓冲区
-class DualStreambuf : public std::streambuf {
-public:
-    // 构造函数
-    DualStreambuf(std::streambuf* console_buf, std::streambuf* file_buf);
-
-    // 禁用复制和移动
-    DualStreambuf(const DualStreambuf&) = delete;
-    DualStreambuf& operator=(const DualStreambuf&) = delete;
-    DualStreambuf(DualStreambuf&&) = delete;
-    DualStreambuf& operator=(DualStreambuf&&) = delete;
-
-protected:
-    // 单字符输出处理
-    int overflow(int c) override;
-
-    // 批量字符输出处理
-    std::streamsize xsputn(const char* s, std::streamsize count) override;
-
-private:
-    std::streambuf* console_buf_;   // 控制台缓冲区指针
-    std::streambuf* file_buf_;      // 文件缓冲区指针
-    bool need_timestamp_;           // 标记: 下一个字符是否需要时间戳
-
-    // 获取当前时间戳 "[YYYY-MM-DD HH:MM:SS] "
-    std::string GetCurrentTimestamp();
-
-    // 向两个缓冲区写入时间戳
-    void WriteTimestamp();
-};
-
-
-// 日志管理器
+// 简化的文件日志类
+// 特点:
+// - 只写文件，不重定向流
+// - 线程安全
+// - 每次写入自动flush
 class Logger {
 public:
-    // 构造函数 - 初始化日志系统
+    // 构造函数 - 创建日志文件
+    // 参数: log_prefix - 日志文件路径前缀（自动添加.log后缀）
     explicit Logger(const std::string& log_prefix);
 
-    // 析构函数 - 恢复标准输出并关闭日志文件
+    // 析构函数 - 关闭日志文件
     ~Logger();
 
     // 禁用复制和移动
@@ -71,18 +50,30 @@ public:
     Logger(Logger&&) = delete;
     Logger& operator=(Logger&&) = delete;
 
+    // 写入日志消息（带时间戳）
+    // 参数: msg - 日志消息
+    void Write(const std::string& msg);
+
+    // 格式化写入日志
+    // 参数: fmt - 格式化字符串, ... - 参数列表
+    void WriteFormat(const char* fmt, ...);
+
     // 获取日志文件路径
     std::string GetLogFilePath() const { return log_file_path_; }
 
 private:
-    std::ofstream log_file_;                    // 日志文件输出流
-    std::streambuf* old_cout_buf_;              // 原始 cout 缓冲区
-    std::unique_ptr<DualStreambuf> dual_buf_;   // 双输出缓冲区
-    std::string log_file_path_;                 // 日志文件完整路径
+    // 获取当前时间戳 "[YYYY-MM-DD HH:MM:SS] "
+    std::string GetTimestamp();
+
+    std::ofstream log_file_;    // 日志文件流
+    std::mutex mutex_;          // 线程安全互斥锁
+    std::string log_file_path_; // 日志文件完整路径
 };
 
+// 全局Logger指针
+extern Logger* g_logger;
 
-// 获取时间戳字符串 (用于文件名)
+// 获取时间戳字符串（用于文件名）
 // 返回格式: YYYYMMDD_HHMMSS
 inline std::string GetTimestampString() {
     auto now = std::chrono::system_clock::now();
@@ -100,16 +91,36 @@ inline std::string GetTimestampString() {
     return ss.str();
 }
 
+// 日志输出宏 - 只写文件
 
-// 日志输出宏 - 临时禁用所有日志，避免崩溃
+// 带换行的日志输出（只写文件）
+#define LOG(msg) do { \
+    if (g_logger) { \
+        g_logger->Write(std::string(msg) + "\n"); \
+    } \
+} while(0)
 
-// 带换行的日志输出
-#define LOG(msg) do { } while(0)
+// 不带换行的日志输出（只写文件）
+#define LOG_NO_NL(msg) do { \
+    if (g_logger) { \
+        g_logger->Write(msg); \
+    } \
+} while(0)
 
-// 不带换行的日志输出
-#define LOG_NO_NL(msg) do { } while(0)
+// 格式化日志输出（只写文件）
+#define LOG_FMT(fmt, ...) do { \
+    if (g_logger) { \
+        g_logger->WriteFormat(fmt, ##__VA_ARGS__); \
+    } \
+} while(0)
 
-// 格式化日志输出
-#define LOG_FMT(fmt, ...) do { } while(0)
+// 控制台输出宏（独立，不经过Logger）
+// 用于关键进度信息的实时显示
+
+// 控制台输出（带换行）
+#define CONSOLE(msg) fprintf(stderr, "%s\n", msg)
+
+// 控制台格式化输出
+#define CONSOLE_FMT(fmt, ...) fprintf(stderr, fmt, ##__VA_ARGS__)
 
 #endif  // LOGGER_H_
