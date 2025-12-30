@@ -58,6 +58,14 @@ int SolveNodeCG(ProblemParams& params, ProblemData& data, BPNode* node) {
     while (true) {
         node->iter_++;
 
+        // 超时检查
+        if (IsTimeUp(params)) {
+            params.is_timeout_ = true;
+            LOG_FMT("[CG] 节点%d: 达到时间限制, 终止列生成\n", node->id_);
+            node->prune_flag_ = true;  // 标记节点剪枝
+            break;
+        }
+
         // 检查最大迭代次数限制
         if (node->iter_ >= kMaxCgIter) {
             LOG_FMT("[CG] 警告: 达到最大迭代次数 %d (异常), 强制终止\n", kMaxCgIter);

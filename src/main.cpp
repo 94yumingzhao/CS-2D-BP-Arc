@@ -24,14 +24,17 @@ using namespace std;
 void PrintUsage(const char* program) {
     cout << "Usage: " << program << " [options]\n";
     cout << "Options:\n";
-    cout << "  -f, --file <path>   Specify instance file path\n";
-    cout << "  -h, --help          Show this help message\n";
+    cout << "  -f, --file <path>    Specify instance file path\n";
+    cout << "  -t, --time <seconds> Set time limit (0 = no limit)\n";
+    cout << "  -h, --help           Show this help message\n";
     cout << "\nIf no file is specified, the latest instance in " << kDataDir << " will be used.\n";
 }
 
 int main(int argc, char* argv[]) {
     // 解析命令行参数
     string instance_file = "";
+    int time_limit = 0;  // 0表示无限制
+
     for (int i = 1; i < argc; i++) {
         string arg = argv[i];
         if (arg == "-h" || arg == "--help") {
@@ -39,6 +42,8 @@ int main(int argc, char* argv[]) {
             return 0;
         } else if ((arg == "-f" || arg == "--file") && i + 1 < argc) {
             instance_file = argv[++i];
+        } else if ((arg == "-t" || arg == "--time") && i + 1 < argc) {
+            time_limit = atoi(argv[++i]);
         } else {
             cerr << "Unknown option: " << arg << "\n";
             PrintUsage(argv[0]);
@@ -58,9 +63,6 @@ int main(int argc, char* argv[]) {
     LOG("[系统] 日志初始化完成");
     LOG_FMT("[系统] 日志文件: %s\n", logger.GetLogFilePath().c_str());
 
-    // 记录开始时间 (用于计算总耗时)
-    auto start_time = chrono::high_resolution_clock::now();
-
     // 程序标题
     LOG("============================================================");
     LOG("  二维下料问题分支定价求解器 (CS-2D-BP-Arc)");
@@ -70,6 +72,16 @@ int main(int argc, char* argv[]) {
     // 初始化数据结构
     ProblemData data;    // 问题数据 (子板类型, 条带类型, 索引映射)
     ProblemParams params; // 问题参数 (尺寸, 方法设置, 全局最优解)
+
+    // 设置时间控制
+    params.time_limit_ = time_limit;
+    params.start_time_ = chrono::steady_clock::now();
+
+    if (time_limit > 0) {
+        LOG_FMT("[系统] 时间限制: %d 秒\n", time_limit);
+    } else {
+        LOG("[系统] 时间限制: 无");
+    }
 
     // 配置子问题求解方法
     // SP1: 宽度方向背包问题 (在母板上选择条带)
@@ -89,8 +101,16 @@ int main(int argc, char* argv[]) {
     auto [status, num_items, num_strips] = LoadInput(params, data, instance_file);
     if (status != 0) {
         LOG("[错误] 数据读取失败");
+        CONSOLE_FMT("[错误] 数据读取失败\n");
         return 1;
     }
+
+    // 控制台输出: 启动信息
+    CONSOLE_FMT("[启动] CS-2D-BP-Arc | %s | 限时: %s\n",
+        params.instance_file_.c_str(),
+        time_limit > 0 ? (to_string(time_limit) + "s").c_str() : "无");
+    CONSOLE_FMT("[数据] %d种子板 | 母板: %dx%d\n",
+        params.num_item_types_, params.stock_width_, params.stock_length_);
 
     // 如果使用Arc Flow方法, 预先生成Arc网络
     if (params.sp1_method_ == kArcFlow || params.sp2_method_ == kArcFlow) {
@@ -121,18 +141,16 @@ int main(int argc, char* argv[]) {
     if (is_integer) {
         // LP解恰好为整数, 无需分支
         LOG("[结果] 根节点解为整数解, 无需分支");
-        fprintf(stderr, "[DEBUG] Integer solution found, exporting...\n");
         params.global_best_int_ = root_node.solution_.obj_val_;
         params.global_best_y_cols_ = root_node.solution_.y_columns_;
         params.global_best_x_cols_ = root_node.solution_.x_columns_;
 
         // 导出根节点解 (供测试可视化)
         ExportSolution(params, data);
-        fprintf(stderr, "[DEBUG] Export complete\n");
     } else {
         // LP解为分数, 需要分支定价求整数解
         LOG("[结果] 根节点解非整数, 需要分支定价");
-        fprintf(stderr, "[DEBUG] Fractional solution (LP=%.4f), starting B&P...\n", root_node.solution_.obj_val_);
+        CONSOLE_FMT("[CG] 收敛 LP=%.2f (分数解, 进入B&P)\n", root_node.solution_.obj_val_);
 
         // 阶段5: 分支定价
         LOG("------------------------------------------------------------");
@@ -140,33 +158,59 @@ int main(int argc, char* argv[]) {
         LOG("------------------------------------------------------------");
 
         RunBranchAndPrice(params, data, &root_node);
-        fprintf(stderr, "[DEBUG] B&P complete, best_int=%.4f\n", params.global_best_int_);
 
         // 导出最优解 (供 CS-2D-Fig 可视化)
         if (params.global_best_int_ < INFINITY) {
-            fprintf(stderr, "[DEBUG] Exporting solution...\n");
             ExportSolution(params, data);
-            fprintf(stderr, "[DEBUG] Export complete\n");
-        } else {
-            fprintf(stderr, "[DEBUG] No integer solution found\n");
         }
     }
 
     // 计算总耗时
-    auto end_time = chrono::high_resolution_clock::now();
-    auto duration = chrono::duration_cast<chrono::milliseconds>(end_time - start_time);
-    double elapsed_sec = duration.count() / 1000.0;
+    double elapsed_sec = GetElapsedTime(params);
 
     // 输出求解结果汇总
     LOG("============================================================");
     LOG("  求解结果 (Solution Summary)");
     LOG("============================================================");
-    LOG_FMT("  最优目标值 (母板数): %.4f\n", params.global_best_int_);
-    LOG_FMT("  根节点下界: %.4f\n", root_node.lower_bound_);
-    LOG_FMT("  最优性间隙: %.2f%%\n", params.gap_ * 100);
-    LOG_FMT("  分支节点数: %d\n", params.node_counter_);
+
+    // 超时状态说明
+    if (params.is_timeout_) {
+        LOG("  [状态] 因达到时间限制而终止");
+        LOG_FMT("  [时间限制] %d 秒\n", params.time_limit_);
+
+        if (params.global_best_int_ < INFINITY) {
+            LOG("  [当前状态] 已找到可行整数解，但未证明最优");
+            LOG_FMT("  [当前最优解] %.0f 块母板\n", params.global_best_int_);
+            LOG_FMT("  [当前下界] %.4f\n", params.optimal_lb_);
+            LOG_FMT("  [当前Gap] %.2f%% (未证明最优)\n", params.gap_ * 100);
+        } else {
+            LOG("  [当前状态] 尚未找到整数解");
+            LOG_FMT("  [LP下界] %.4f\n", root_node.lower_bound_);
+            LOG("  [建议] 增加时间限制或简化问题规模");
+        }
+        LOG_FMT("  [已探索节点] %d\n", params.node_counter_);
+    } else {
+        LOG_FMT("  最优目标值 (母板数): %.4f\n", params.global_best_int_);
+        LOG_FMT("  根节点下界: %.4f\n", root_node.lower_bound_);
+        LOG_FMT("  最优性间隙: %.2f%%\n", params.gap_ * 100);
+        LOG_FMT("  分支节点数: %d\n", params.node_counter_);
+    }
+
     LOG_FMT("  总耗时: %.3f 秒\n", elapsed_sec);
     LOG("============================================================");
+
+    // 控制台输出: 最终结果
+    if (params.is_timeout_) {
+        if (params.global_best_int_ < INFINITY) {
+            CONSOLE_FMT("[完成] 超时 | 当前解=%.0f | Gap=%.1f%% | 耗时=%.1fs\n",
+                params.global_best_int_, params.gap_ * 100, elapsed_sec);
+        } else {
+            CONSOLE_FMT("[完成] 超时 | 未找到整数解 | 耗时=%.1fs\n", elapsed_sec);
+        }
+    } else {
+        CONSOLE_FMT("[完成] 最优=%.0f | Gap=%.1f%% | 耗时=%.1fs\n",
+            params.global_best_int_, params.gap_ * 100, elapsed_sec);
+    }
 
     // 输出最优切割方案
     if (params.global_best_int_ < INFINITY) {

@@ -65,11 +65,24 @@ void SolveRootCG(ProblemParams& params, ProblemData& data, BPNode& root_node) {
         while (true) {
             root_node.iter_++;
 
+            // 超时检查
+            if (IsTimeUp(params)) {
+                params.is_timeout_ = true;
+                LOG_FMT("[CG] 达到时间限制 (%d秒), 终止列生成\n", params.time_limit_);
+                break;
+            }
+
             // 检查最大迭代次数限制
             if (root_node.iter_ >= kMaxCgIter) {
                 LOG_FMT("[CG] 警告: 达到最大迭代次数 %d (异常), 强制终止\n", kMaxCgIter);
                 LOG("[CG]    正常应该收敛, 请检查算法或降低 kMaxCgIter 以更早发现问题");
                 break;
+            }
+
+            // 控制台进度: 每10次迭代输出一次
+            if (root_node.iter_ % 10 == 0) {
+                double obj_val = cplex.getValue(obj);
+                CONSOLE_FMT("[CG] iter=%d obj=%.2f\n", root_node.iter_, obj_val);
             }
 
             // 步骤1: 求解SP1子问题 (宽度方向背包)
@@ -96,6 +109,8 @@ void SolveRootCG(ProblemParams& params, ProblemData& data, BPNode& root_node) {
                 // 检查是否完全收敛
                 if (all_sp2_converged) {
                     LOG_FMT("[CG] 列生成收敛, 迭代%d次\n", root_node.iter_);
+                    double final_obj = cplex.getValue(obj);
+                    CONSOLE_FMT("[CG] 收敛 iter=%d obj=%.2f\n", root_node.iter_, final_obj);
                     break;  // SP1和所有SP2都收敛, 退出循环
                 }
             } else {
@@ -393,7 +408,7 @@ bool SolveRootFinalMP(ProblemParams& params, ProblemData& data,
     for (int col = 0; col < (int)node.y_columns_.size(); col++) {
         int var_idx = node.y_columns_[col].var_index_;
         if (var_idx < 0 || var_idx >= vars.getSize()) {
-            fprintf(stderr, "[ERROR] Y column %d has invalid var_index=%d (vars.size=%d)\n",
+            LOG_FMT("[ERROR] Y column %d has invalid var_index=%d (vars.size=%d)\n",
                     col, var_idx, vars.getSize());
             continue;
         }
@@ -405,9 +420,9 @@ bool SolveRootFinalMP(ProblemParams& params, ProblemData& data,
         y_col.value_ = val;  // 记录解值
         node.solution_.y_columns_.push_back(y_col);
 
-        // 输出非零解
+        // 日志输出非零解
         if (val > kZeroTolerance) {
-            fprintf(stderr, "  Y_%d = %.4f (var_idx=%d)\n", col + 1, val, var_idx);
+            LOG_FMT("  Y_%d = %.4f (var_idx=%d)\n", col + 1, val, var_idx);
         }
     }
 
@@ -416,7 +431,7 @@ bool SolveRootFinalMP(ProblemParams& params, ProblemData& data,
     for (int col = 0; col < (int)node.x_columns_.size(); col++) {
         int var_idx = node.x_columns_[col].var_index_;
         if (var_idx < 0 || var_idx >= vars.getSize()) {
-            fprintf(stderr, "[ERROR] X column %d has invalid var_index=%d (vars.size=%d)\n",
+            LOG_FMT("[ERROR] X column %d has invalid var_index=%d (vars.size=%d)\n",
                     col, var_idx, vars.getSize());
             continue;
         }

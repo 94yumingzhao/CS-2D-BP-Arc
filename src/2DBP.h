@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <ctime>
@@ -278,6 +279,11 @@ struct ProblemParams {
     string instance_file_ = "";         // 算例文件名
     double root_lb_ = 0.0;              // 根节点下界
 
+    // 时间控制
+    int time_limit_ = 0;                // 时间限制 (秒), 0表示无限制
+    chrono::steady_clock::time_point start_time_;  // 程序开始时间
+    bool is_timeout_ = false;           // 是否因超时终止
+
     // 子问题求解方法设置
     int sp1_method_ = kCplexIP;         // SP1 默认求解方法
     int sp2_method_ = kCplexIP;         // SP2 默认求解方法
@@ -478,5 +484,32 @@ int RunBranchAndPrice(ProblemParams& params, ProblemData& data, BPNode* root);
 // 输出函数 (output.cpp)
 void ExportSolution(ProblemParams& params, ProblemData& data);
 void ExportResults(ProblemParams& params, ProblemData& data);
+
+// 时间控制函数 (内联实现)
+// 检查是否超时
+inline bool IsTimeUp(ProblemParams& params) {
+    if (params.time_limit_ <= 0) return false;
+    auto now = chrono::steady_clock::now();
+    auto elapsed = chrono::duration_cast<chrono::seconds>(
+        now - params.start_time_).count();
+    return elapsed >= params.time_limit_;
+}
+
+// 获取剩余时间 (秒), 用于设置CPLEX时间限制
+inline double GetRemainingTime(ProblemParams& params) {
+    if (params.time_limit_ <= 0) return 1e6;
+    auto now = chrono::steady_clock::now();
+    auto elapsed = chrono::duration_cast<chrono::seconds>(
+        now - params.start_time_).count();
+    return max(1.0, (double)(params.time_limit_ - elapsed));
+}
+
+// 获取已用时间 (秒)
+inline double GetElapsedTime(ProblemParams& params) {
+    auto now = chrono::steady_clock::now();
+    auto elapsed = chrono::duration_cast<chrono::milliseconds>(
+        now - params.start_time_).count();
+    return elapsed / 1000.0;
+}
 
 #endif  // CS_2D_BP_ARC_H_

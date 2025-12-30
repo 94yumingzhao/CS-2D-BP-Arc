@@ -297,29 +297,22 @@ BPNode* SelectBranchNode(BPNode* head) {
 int RunBranchAndPrice(ProblemParams& params, ProblemData& data, BPNode* root) {
     LOG("[BP] 分支定价开始 (Arc 分支策略)");
     LOG_FMT("[BP] 时间限制: %d 秒\n", kMaxBPTimeSec);
-    fprintf(stderr, "[DEBUG] Entering RunBranchAndPrice\n");
 
     // 记录开始时间
     auto bp_start_time = chrono::high_resolution_clock::now();
 
     // 确保 Arc Flow 网络已生成
     // 分支定价需要将解转换为 Arc 流量
-    fprintf(stderr, "[DEBUG] Checking Arc Flow network...\n");
     if (data.sp1_arc_data_.arc_list_.empty()) {
-        fprintf(stderr, "[DEBUG] Generating Arc Flow network...\n");
         GenerateAllArcs(data, params);
     }
 
     // 为根节点解生成 Arc 集合
     // 用于后续的 Arc 流量分析
-    fprintf(stderr, "[DEBUG] Generating Y Arc sets (y_cols=%d)...\n", (int)root->solution_.y_columns_.size());
     GenerateYArcSetMatrix(*root, data.strip_widths_);
-    fprintf(stderr, "[DEBUG] Generating X Arc sets (x_cols=%d, strip_types=%d)...\n",
-            (int)root->solution_.x_columns_.size(), params.num_strip_types_);
     for (int j = 0; j < params.num_strip_types_; j++) {
         GenerateXArcSetMatrix(*root, data.item_lengths_, j);
     }
-    fprintf(stderr, "[DEBUG] Arc set generation complete\n");
 
     // 初始化节点链表 (用于存储所有节点)
     BPNode* head = root;
@@ -327,43 +320,55 @@ int RunBranchAndPrice(ProblemParams& params, ProblemData& data, BPNode* root) {
     int node_count = 1;
 
     // 检查根节点是否已经是整数解
-    fprintf(stderr, "[DEBUG] Checking if root is integer solution...\n");
     int branch_type = SelectBranchArc(params, data, root);
-    fprintf(stderr, "[DEBUG] SelectBranchArc returned: %d\n", branch_type);
     if (branch_type == kBranchNone) {
         // Arc 流量全整数，根节点即为最优解
         params.global_best_int_ = root->solution_.obj_val_;
         params.global_best_y_cols_ = root->solution_.y_columns_;
         params.global_best_x_cols_ = root->solution_.x_columns_;
         LOG("[BP] 根节点 Arc 流量全整数, 即为最优解");
-        fprintf(stderr, "[DEBUG] Root is integer, returning\n");
+        CONSOLE_FMT("[BP] 根节点即整数解 obj=%.0f\n", params.global_best_int_);
         return 0;
     }
-    fprintf(stderr, "[DEBUG] Root is fractional, starting B&P loop...\n");
 
     // 分支定价主循环
     int loop_iter = 0;
     while (true) {
         loop_iter++;
-        fprintf(stderr, "[DEBUG] B&P loop iteration %d\n", loop_iter);
+
+        // 超时检查
+        if (IsTimeUp(params)) {
+            params.is_timeout_ = true;
+            LOG_FMT("[BP] 达到时间限制 (%d秒), 终止搜索\n", params.time_limit_);
+            LOG_FMT("[BP] 当前状态: 已探索 %d 个节点\n", params.node_counter_);
+            if (params.global_best_int_ < INFINITY) {
+                LOG_FMT("[BP] 当前最优整数解: %.0f\n", params.global_best_int_);
+            } else {
+                LOG("[BP] 尚未找到整数解");
+            }
+            break;
+        }
 
         // 选择待分支节点 (下界最小的未处理节点)
-        fprintf(stderr, "[DEBUG] Selecting branch node...\n");
         BPNode* parent = SelectBranchNode(head);
 
         // 检查终止条件: 无可分支节点
         if (parent == nullptr) {
             LOG("[BP] 无可分支节点, 搜索完成");
-            fprintf(stderr, "[DEBUG] No more nodes to branch, B&P complete\n");
             break;
         }
 
         LOG_FMT("[BP] 选择节点 %d 进行分支 (LB=%.4f)\n",
             parent->id_, parent->lower_bound_);
-        fprintf(stderr, "[DEBUG] Selected node %d for branching\n", parent->id_);
+
+        // 控制台进度: 每个节点都输出
+        double lb = parent->lower_bound_;
+        double ub = params.global_best_int_;
+        double gap = (ub < INFINITY && lb > 0) ? (ub - lb) / ub * 100 : 0;
+        CONSOLE_FMT("[BP] n=%d | LB=%.2f UB=%.0f Gap=%.1f%%\n",
+            node_count, lb, ub, gap);
 
         // 创建并求解左子节点
-        fprintf(stderr, "[DEBUG] Creating left child...\n");
         BPNode* left = new BPNode();
         node_count++;
         params.node_counter_++;
@@ -371,9 +376,7 @@ int RunBranchAndPrice(ProblemParams& params, ProblemData& data, BPNode* root) {
 
         // 求解左子节点的列生成
         // 子问题会应用该节点累积的 Arc 约束
-        fprintf(stderr, "[DEBUG] Solving left child CG (node %d)...\n", left->id_);
         SolveNodeCG(params, data, left);
-        fprintf(stderr, "[DEBUG] Left child CG done, prune_flag=%d\n", left->prune_flag_);
 
         // 将左子节点加入链表
         tail->next_ = left;
