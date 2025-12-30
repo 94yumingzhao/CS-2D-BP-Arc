@@ -1,0 +1,17 @@
+# 2DPackLib Format - 2D Cutting Stock Problem Instance
+# Problem: CS-2D-BP-Arc Test Data
+#
+# Format:
+#   m                                    - number of item types
+#   W H                                  - bin (stock) width and height
+#   id width height demand [copies] [profit]  - item data (copies/profit optional)
+#
+# Note: width = horizontal (length), height = vertical (width)
+#
+5
+500 300
+0	180	180	3
+1	120	70	4
+2	80	50	4
+3	90	60	3
+4	40	80	6

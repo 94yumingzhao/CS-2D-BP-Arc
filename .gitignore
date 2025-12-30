@@ -16,8 +16,13 @@ cmake-build-*/
 # Output directories (keep structure, ignore contents)
 logs/*
 lp/*
+results/*
 !logs/.gitkeep
 !lp/.gitkeep
+!results/.gitkeep
+
+# Generated files
+README.html
 
 # Output txt files (but not CMakeLists.txt)
 /Stock_*.txt

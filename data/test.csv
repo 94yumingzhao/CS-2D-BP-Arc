@@ -1,0 +1,14 @@
+# 2DPackLib CSV Format - 2D Cutting Stock Problem
+# width = horizontal (length), height = vertical (width)
+#
+# Stock dimensions
+stock_width,stock_height
+500,300
+#
+# Item types: id,width,height,demand
+id,width,height,demand
+0,180,180,3
+1,120,70,4
+2,80,50,4
+3,90,60,3
+4,40,80,6

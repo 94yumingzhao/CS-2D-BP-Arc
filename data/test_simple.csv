@@ -1,10 +1,11 @@
-# 2DPackLib CSV Format - Simple test case
-# 3 items, 2 strip types
+# 2D Cutting Stock Problem Instance - Simple test case
+# 3 item types, 2 strip types
+# W=width (short edge, Stage1 cutting), L=length (long edge, Stage2 cutting)
 #
-stock_width,stock_height
-400,200
+stock_width,stock_length
+200,400
 #
-id,width,height,demand
-0,150,80,2
-1,100,80,2
-2,100,60,2
+id,width,length,demand
+0,80,150,2
+1,80,100,2
+2,60,100,2
