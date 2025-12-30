@@ -135,7 +135,8 @@ void RunHeuristic(ProblemParams& params, ProblemData& data, BPNode& root_node) {
 
     LOG("[启发式] 初始解生成完成");
 
-    // 控制台输出: 初始解信息
+    // 控制台输出: 初始解信息 (带时间戳)
     int init_plates = num_strip_types;  // 对角矩阵策略, Y列数=初始母板使用量
-    CONSOLE_FMT("[启发] 初始解: %d块\n", init_plates);
+    PROGRESS(GetElapsedTime(params), "启发 | 初始解:%d块 Y=%d X=%d\n",
+        init_plates, num_strip_types, num_strip_types);
 }

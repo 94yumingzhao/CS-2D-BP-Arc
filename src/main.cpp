@@ -86,8 +86,9 @@ int main(int argc, char* argv[]) {
     // 配置子问题求解方法
     // SP1: 宽度方向背包问题 (在母板上选择条带)
     // SP2: 长度方向背包问题 (在条带上选择子板)
-    params.sp1_method_ = kCplexIP;
-    params.sp2_method_ = kCplexIP;
+    // 注意: 必须使用kArcFlow以支持Arc分支约束, kCplexIP不支持Arc约束!
+    params.sp1_method_ = kArcFlow;
+    params.sp2_method_ = kArcFlow;
 
     // 初始化根节点
     BPNode root_node;
@@ -105,11 +106,11 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // 控制台输出: 启动信息
-    CONSOLE_FMT("[启动] CS-2D-BP-Arc | %s | 限时: %s\n",
+    // 控制台输出: 启动信息 (带时间戳)
+    PROGRESS(GetElapsedTime(params), "启动 | CS-2D-BP-Arc | %s | 限时:%s\n",
         params.instance_file_.c_str(),
-        time_limit > 0 ? (to_string(time_limit) + "s").c_str() : "无");
-    CONSOLE_FMT("[数据] %d种子板 | 母板: %dx%d\n",
+        time_limit > 0 ? (to_string(time_limit) + "s").c_str() : "--");
+    PROGRESS(GetElapsedTime(params), "数据 | %d种子板 | 母板:%dx%d\n",
         params.num_item_types_, params.stock_width_, params.stock_length_);
 
     // 如果使用Arc Flow方法, 预先生成Arc网络
@@ -150,7 +151,8 @@ int main(int argc, char* argv[]) {
     } else {
         // LP解为分数, 需要分支定价求整数解
         LOG("[结果] 根节点解非整数, 需要分支定价");
-        CONSOLE_FMT("[CG] 收敛 LP=%.2f (分数解, 进入B&P)\n", root_node.solution_.obj_val_);
+        PROGRESS(GetElapsedTime(params), "CG   | 收敛 LP=%.2f (分数解)\n",
+            root_node.solution_.obj_val_);
 
         // 阶段5: 分支定价
         LOG("------------------------------------------------------------");
@@ -199,17 +201,18 @@ int main(int argc, char* argv[]) {
     LOG_FMT("  总耗时: %.3f 秒\n", elapsed_sec);
     LOG("============================================================");
 
-    // 控制台输出: 最终结果
+    // 控制台输出: 最终结果 (带时间戳)
     if (params.is_timeout_) {
         if (params.global_best_int_ < INFINITY) {
-            CONSOLE_FMT("[完成] 超时 | 当前解=%.0f | Gap=%.1f%% | 耗时=%.1fs\n",
-                params.global_best_int_, params.gap_ * 100, elapsed_sec);
+            PROGRESS(elapsed_sec, "完成 | 超时 | 解=%.0f Gap=%.1f%% nodes=%d\n",
+                params.global_best_int_, params.gap_ * 100, params.node_counter_);
         } else {
-            CONSOLE_FMT("[完成] 超时 | 未找到整数解 | 耗时=%.1fs\n", elapsed_sec);
+            PROGRESS(elapsed_sec, "完成 | 超时 | 未找到整数解 nodes=%d\n",
+                params.node_counter_);
         }
     } else {
-        CONSOLE_FMT("[完成] 最优=%.0f | Gap=%.1f%% | 耗时=%.1fs\n",
-            params.global_best_int_, params.gap_ * 100, elapsed_sec);
+        PROGRESS(elapsed_sec, "完成 | 最优=%.0f Gap=%.1f%% nodes=%d\n",
+            params.global_best_int_, params.gap_ * 100, params.node_counter_);
     }
 
     // 输出最优切割方案

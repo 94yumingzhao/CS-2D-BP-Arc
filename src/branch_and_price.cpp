@@ -296,7 +296,11 @@ BPNode* SelectBranchNode(BPNode* head) {
 // 输出: 最优整数解存储在 params 中
 int RunBranchAndPrice(ProblemParams& params, ProblemData& data, BPNode* root) {
     LOG("[BP] 分支定价开始 (Arc 分支策略)");
-    LOG_FMT("[BP] 时间限制: %d 秒\n", kMaxBPTimeSec);
+    if (params.time_limit_ > 0) {
+        LOG_FMT("[BP] 时间限制: %d 秒\n", params.time_limit_);
+    } else {
+        LOG("[BP] 时间限制: 无");
+    }
 
     // 记录开始时间
     auto bp_start_time = chrono::high_resolution_clock::now();
@@ -327,7 +331,8 @@ int RunBranchAndPrice(ProblemParams& params, ProblemData& data, BPNode* root) {
         params.global_best_y_cols_ = root->solution_.y_columns_;
         params.global_best_x_cols_ = root->solution_.x_columns_;
         LOG("[BP] 根节点 Arc 流量全整数, 即为最优解");
-        CONSOLE_FMT("[BP] 根节点即整数解 obj=%.0f\n", params.global_best_int_);
+        PROGRESS(GetElapsedTime(params), "BP   | 根节点即整数解 obj=%.0f\n",
+            params.global_best_int_);
         return 0;
     }
 
@@ -361,12 +366,32 @@ int RunBranchAndPrice(ProblemParams& params, ProblemData& data, BPNode* root) {
         LOG_FMT("[BP] 选择节点 %d 进行分支 (LB=%.4f)\n",
             parent->id_, parent->lower_bound_);
 
-        // 控制台进度: 每个节点都输出
+        // 统计活动节点数和已剪枝节点数
+        int active_count = 0;
+        int pruned_count = 0;
+        BPNode* stat_node = head;
+        while (stat_node != nullptr) {
+            if (stat_node->prune_flag_ == 1) {
+                pruned_count++;
+            } else if (stat_node->branched_flag_ == 0) {
+                active_count++;
+            }
+            stat_node = stat_node->next_;
+        }
+
+        // 控制台进度: 每个节点都输出 (带时间戳和详细信息)
         double lb = parent->lower_bound_;
         double ub = params.global_best_int_;
-        double gap = (ub < INFINITY && lb > 0) ? (ub - lb) / ub * 100 : 0;
-        CONSOLE_FMT("[BP] n=%d | LB=%.2f UB=%.0f Gap=%.1f%%\n",
-            node_count, lb, ub, gap);
+        if (ub < INFINITY) {
+            double gap = (ub - lb) / ub * 100;
+            PROGRESS(GetElapsedTime(params),
+                "BP   | n=%-3d LB=%-6.2f UB=%-4.0f Gap=%-5.1f%% act=%-2d cut=%-2d\n",
+                node_count, lb, ub, gap, active_count, pruned_count);
+        } else {
+            PROGRESS(GetElapsedTime(params),
+                "BP   | n=%-3d LB=%-6.2f UB=--   Gap=--     act=%-2d cut=%-2d\n",
+                node_count, lb, active_count, pruned_count);
+        }
 
         // 创建并求解左子节点
         BPNode* left = new BPNode();
@@ -454,12 +479,10 @@ int RunBranchAndPrice(ProblemParams& params, ProblemData& data, BPNode* root) {
             curr = curr->next_;
         }
 
-        // 检查时间限制 (主要控制手段)
-        auto current_time = chrono::high_resolution_clock::now();
-        auto elapsed = chrono::duration_cast<chrono::seconds>(
-            current_time - bp_start_time).count();
-        if (elapsed >= kMaxBPTimeSec) {
-            LOG_FMT("[BP] 达到时间限制 (%d 秒), 终止搜索\n", kMaxBPTimeSec);
+        // 检查时间限制 (使用用户设置的时间限制)
+        if (params.time_limit_ > 0 && IsTimeUp(params)) {
+            params.is_timeout_ = true;
+            LOG_FMT("[BP] 达到时间限制 (%d 秒), 终止搜索\n", params.time_limit_);
             break;
         }
 

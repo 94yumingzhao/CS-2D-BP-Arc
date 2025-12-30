@@ -123,4 +123,20 @@ inline std::string GetTimestampString() {
 // 控制台格式化输出
 #define CONSOLE_FMT(fmt, ...) fprintf(stderr, fmt, ##__VA_ARGS__)
 
+// 格式化已用时间为 [MM:SS.s] 格式
+// 参数: elapsed_sec - 已用秒数 (double)
+// 返回: "[01:23.4]" 格式的字符串
+inline std::string FormatElapsed(double elapsed_sec) {
+    int minutes = static_cast<int>(elapsed_sec) / 60;
+    double seconds = elapsed_sec - minutes * 60;
+    char buf[16];
+    snprintf(buf, sizeof(buf), "[%02d:%04.1f]", minutes, seconds);
+    return std::string(buf);
+}
+
+// 带时间戳的控制台输出宏
+// 参数: elapsed - 已用时间(秒), fmt - 格式字符串, ... - 参数
+#define PROGRESS(elapsed, fmt, ...) \
+    fprintf(stderr, "%s " fmt, FormatElapsed(elapsed).c_str(), ##__VA_ARGS__)
+
 #endif  // LOGGER_H_

@@ -79,10 +79,14 @@ void SolveRootCG(ProblemParams& params, ProblemData& data, BPNode& root_node) {
                 break;
             }
 
-            // 控制台进度: 每10次迭代输出一次
-            if (root_node.iter_ % 10 == 0) {
+            // 控制台进度: 首次迭代、每5次迭代输出
+            if (root_node.iter_ == 1 || root_node.iter_ % 5 == 0) {
                 double obj_val = cplex.getValue(obj);
-                CONSOLE_FMT("[CG] iter=%d obj=%.2f\n", root_node.iter_, obj_val);
+                int num_y = static_cast<int>(root_node.y_columns_.size());
+                int num_x = static_cast<int>(root_node.x_columns_.size());
+                PROGRESS(GetElapsedTime(params),
+                    "CG   | iter=%-3d obj=%-7.2f Y=%-3d X=%-3d\n",
+                    root_node.iter_, obj_val, num_y, num_x);
             }
 
             // 步骤1: 求解SP1子问题 (宽度方向背包)
@@ -110,7 +114,11 @@ void SolveRootCG(ProblemParams& params, ProblemData& data, BPNode& root_node) {
                 if (all_sp2_converged) {
                     LOG_FMT("[CG] 列生成收敛, 迭代%d次\n", root_node.iter_);
                     double final_obj = cplex.getValue(obj);
-                    CONSOLE_FMT("[CG] 收敛 iter=%d obj=%.2f\n", root_node.iter_, final_obj);
+                    int num_y = static_cast<int>(root_node.y_columns_.size());
+                    int num_x = static_cast<int>(root_node.x_columns_.size());
+                    PROGRESS(GetElapsedTime(params),
+                        "CG   | 收敛 iter=%-3d obj=%-7.2f Y=%-3d X=%-3d\n",
+                        root_node.iter_, final_obj, num_y, num_x);
                     break;  // SP1和所有SP2都收敛, 退出循环
                 }
             } else {
