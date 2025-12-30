@@ -117,10 +117,13 @@ int SolveNodeCG(ProblemParams& params, ProblemData& data, BPNode* node) {
 }
 
 // 构建并求解非根节点的初始主问题
-// 功能: 基于继承的列池构建主问题, 应用变量分支约束
+// 功能: 基于继承的列池构建主问题, 应用变量分支约束和Arc行约束
 // 变量分支约束:
 //   - branched_var_ids_: 受分支约束影响的变量索引
 //   - branched_bounds_: 对应变量的上界 (来自左分支的floor(v))
+// Arc行约束 (数学模型 Section 9.5):
+//   - Arc约束作为行约束添加到RMP: F_a <= bound 或 F_a >= bound
+//   - 求解后提取对偶价格 μ_a, 用于子问题中修正弧收益
 // 注意: 变量索引 = [0, num_y_cols) 为Y变量, [num_y_cols, ...) 为X变量
 // 返回值: true=可行, false=不可行
 bool SolveNodeInitMP(ProblemParams& params, ProblemData& data,
@@ -131,7 +134,7 @@ bool SolveNodeInitMP(ProblemParams& params, ProblemData& data,
     int num_x_cols = static_cast<int>(node->x_columns_.size());
     int num_strip_types = params.num_strip_types_;
     int num_item_types = params.num_item_types_;
-    int num_rows = num_strip_types + num_item_types;
+    int num_base_rows = num_strip_types + num_item_types;
 
     LOG_FMT("[MP-0] 节点%d 构建初始主问题 (Y=%d, X=%d)\n",
         node->id_, num_y_cols, num_x_cols);
@@ -184,6 +187,7 @@ bool SolveNodeInitMP(ProblemParams& params, ProblemData& data,
         string var_name = "Y_" + to_string(col + 1);
         IloNumVar var(cplex_col, 0, var_ub, ILOFLOAT, var_name.c_str());
         vars.add(var);
+        node->y_columns_[col].var_index_ = col;  // 记录变量索引
         cplex_col.end();
     }
 
@@ -215,7 +219,151 @@ bool SolveNodeInitMP(ProblemParams& params, ProblemData& data,
         string var_name = "X_" + to_string(col + 1);
         IloNumVar var(cplex_col, 0, var_ub, ILOFLOAT, var_name.c_str());
         vars.add(var);
+        node->x_columns_[col].var_index_ = num_y_cols + col;  // 记录变量索引
         cplex_col.end();
+    }
+
+    // ============================================================
+    // 添加 Arc 行约束 (数学模型 Section 9.5)
+    // 弧分支约束作为行约束添加到 RMP, 而不是直接修改子问题变量边界
+    // 约束形式: F_a = Σ_{p: uses arc a} X_p 或 Y_q
+    // ============================================================
+
+    // 用于存储 Arc 约束行的索引, 以便后续提取对偶价格
+    vector<pair<int, array<int, 2>>> sp1_arc_cons_info;  // (cons索引, arc)
+    map<int, vector<pair<int, array<int, 2>>>> sp2_arc_cons_info;  // strip_type -> (cons索引, arc)
+
+    // SP1 Arc 约束 (宽度方向, 作用于 Y 列)
+    // F^Y_a = Σ_{q: q uses arc a} Y_q
+    // 零弧约束: F^Y_a <= 0
+    for (const auto& arc : node->sp1_zero_arcs_) {
+        IloExpr arc_flow(env);
+        for (int col = 0; col < num_y_cols; col++) {
+            // 检查该 Y 列是否使用此 arc
+            if (node->y_columns_[col].arc_set_.count(arc) > 0) {
+                arc_flow += vars[col];
+            }
+        }
+        IloRange arc_con(env, -IloInfinity, arc_flow, 0);  // F_a <= 0
+        string con_name = "SP1_zero_" + to_string(arc[0]) + "_" + to_string(arc[1]);
+        arc_con.setName(con_name.c_str());
+        cons.add(arc_con);
+        model.add(arc_con);
+        sp1_arc_cons_info.push_back({static_cast<int>(cons.getSize()) - 1, arc});
+        arc_flow.end();
+    }
+
+    // SP1 上界约束: F^Y_a <= bound
+    for (size_t i = 0; i < node->sp1_lower_arcs_.size(); i++) {
+        const auto& arc = node->sp1_lower_arcs_[i];
+        int bound = node->sp1_lower_bounds_[i];
+        IloExpr arc_flow(env);
+        for (int col = 0; col < num_y_cols; col++) {
+            if (node->y_columns_[col].arc_set_.count(arc) > 0) {
+                arc_flow += vars[col];
+            }
+        }
+        IloRange arc_con(env, -IloInfinity, arc_flow, bound);  // F_a <= bound
+        string con_name = "SP1_ub_" + to_string(arc[0]) + "_" + to_string(arc[1]);
+        arc_con.setName(con_name.c_str());
+        cons.add(arc_con);
+        model.add(arc_con);
+        sp1_arc_cons_info.push_back({static_cast<int>(cons.getSize()) - 1, arc});
+        arc_flow.end();
+    }
+
+    // SP1 下界约束: F^Y_a >= bound
+    for (size_t i = 0; i < node->sp1_greater_arcs_.size(); i++) {
+        const auto& arc = node->sp1_greater_arcs_[i];
+        int bound = node->sp1_greater_bounds_[i];
+        IloExpr arc_flow(env);
+        for (int col = 0; col < num_y_cols; col++) {
+            if (node->y_columns_[col].arc_set_.count(arc) > 0) {
+                arc_flow += vars[col];
+            }
+        }
+        IloRange arc_con(env, bound, arc_flow, IloInfinity);  // F_a >= bound
+        string con_name = "SP1_lb_" + to_string(arc[0]) + "_" + to_string(arc[1]);
+        arc_con.setName(con_name.c_str());
+        cons.add(arc_con);
+        model.add(arc_con);
+        sp1_arc_cons_info.push_back({static_cast<int>(cons.getSize()) - 1, arc});
+        arc_flow.end();
+    }
+
+    // SP2 Arc 约束 (长度方向, 作用于 X 列, 按条带类型)
+    // F^X_a = Σ_{p: j(p)=j(a) and p uses arc a} X_p
+    for (const auto& kv : node->sp2_zero_arcs_) {
+        int strip_type = kv.first;
+        for (const auto& arc : kv.second) {
+            IloExpr arc_flow(env);
+            for (int col = 0; col < num_x_cols; col++) {
+                if (node->x_columns_[col].strip_type_id_ == strip_type &&
+                    node->x_columns_[col].arc_set_.count(arc) > 0) {
+                    arc_flow += vars[num_y_cols + col];
+                }
+            }
+            IloRange arc_con(env, -IloInfinity, arc_flow, 0);  // F_a <= 0
+            string con_name = "SP2_zero_" + to_string(strip_type) + "_" +
+                              to_string(arc[0]) + "_" + to_string(arc[1]);
+            arc_con.setName(con_name.c_str());
+            cons.add(arc_con);
+            model.add(arc_con);
+            sp2_arc_cons_info[strip_type].push_back({static_cast<int>(cons.getSize()) - 1, arc});
+            arc_flow.end();
+        }
+    }
+
+    // SP2 上界约束
+    for (const auto& kv : node->sp2_lower_arcs_) {
+        int strip_type = kv.first;
+        const auto& arcs = kv.second;
+        const auto& bounds = node->sp2_lower_bounds_.at(strip_type);
+        for (size_t i = 0; i < arcs.size(); i++) {
+            const auto& arc = arcs[i];
+            int bound = bounds[i];
+            IloExpr arc_flow(env);
+            for (int col = 0; col < num_x_cols; col++) {
+                if (node->x_columns_[col].strip_type_id_ == strip_type &&
+                    node->x_columns_[col].arc_set_.count(arc) > 0) {
+                    arc_flow += vars[num_y_cols + col];
+                }
+            }
+            IloRange arc_con(env, -IloInfinity, arc_flow, bound);
+            string con_name = "SP2_ub_" + to_string(strip_type) + "_" +
+                              to_string(arc[0]) + "_" + to_string(arc[1]);
+            arc_con.setName(con_name.c_str());
+            cons.add(arc_con);
+            model.add(arc_con);
+            sp2_arc_cons_info[strip_type].push_back({static_cast<int>(cons.getSize()) - 1, arc});
+            arc_flow.end();
+        }
+    }
+
+    // SP2 下界约束
+    for (const auto& kv : node->sp2_greater_arcs_) {
+        int strip_type = kv.first;
+        const auto& arcs = kv.second;
+        const auto& bounds = node->sp2_greater_bounds_.at(strip_type);
+        for (size_t i = 0; i < arcs.size(); i++) {
+            const auto& arc = arcs[i];
+            int bound = bounds[i];
+            IloExpr arc_flow(env);
+            for (int col = 0; col < num_x_cols; col++) {
+                if (node->x_columns_[col].strip_type_id_ == strip_type &&
+                    node->x_columns_[col].arc_set_.count(arc) > 0) {
+                    arc_flow += vars[num_y_cols + col];
+                }
+            }
+            IloRange arc_con(env, bound, arc_flow, IloInfinity);
+            string con_name = "SP2_lb_" + to_string(strip_type) + "_" +
+                              to_string(arc[0]) + "_" + to_string(arc[1]);
+            arc_con.setName(con_name.c_str());
+            cons.add(arc_con);
+            model.add(arc_con);
+            sp2_arc_cons_info[strip_type].push_back({static_cast<int>(cons.getSize()) - 1, arc});
+            arc_flow.end();
+        }
     }
 
     // 求解初始主问题
@@ -236,10 +384,32 @@ bool SolveNodeInitMP(ProblemParams& params, ProblemData& data,
 
     // 提取对偶价格, 用于子问题求解
     node->duals_.clear();
-    for (int row = 0; row < num_rows; row++) {
+    for (int row = 0; row < num_base_rows; row++) {
         double dual = cplex.getDual(cons[row]);
         if (dual == -0.0) dual = 0.0;
         node->duals_.push_back(dual);
+    }
+
+    // 提取 Arc 约束的对偶价格 (数学模型 Section 9.5)
+    // μ_a 用于修正子问题中弧的收益
+    node->sp1_arc_duals_.clear();
+    for (const auto& info : sp1_arc_cons_info) {
+        double dual = cplex.getDual(cons[info.first]);
+        if (dual == -0.0) dual = 0.0;
+        node->sp1_arc_duals_[info.second] = dual;
+        LOG_FMT("  SP1 Arc (%d,%d) dual=%.4f\n", info.second[0], info.second[1], dual);
+    }
+
+    node->sp2_arc_duals_.clear();
+    for (const auto& kv : sp2_arc_cons_info) {
+        int strip_type = kv.first;
+        for (const auto& info : kv.second) {
+            double dual = cplex.getDual(cons[info.first]);
+            if (dual == -0.0) dual = 0.0;
+            node->sp2_arc_duals_[strip_type][info.second] = dual;
+            LOG_FMT("  SP2[%d] Arc (%d,%d) dual=%.4f\n",
+                strip_type, info.second[0], info.second[1], dual);
+        }
     }
 
     cplex.end();
@@ -248,7 +418,9 @@ bool SolveNodeInitMP(ProblemParams& params, ProblemData& data,
 
 // 更新非根节点主问题: 添加新生成的列
 // 功能: 将子问题找到的改进列添加到主问题
-// 注意: 新列不受变量分支约束限制 (只有继承的老列受限)
+// 注意:
+//   - 新列不受变量分支约束限制 (只有继承的老列受限)
+//   - 新列需要在 Arc 约束行中设置系数 (如果该列使用受约束的 Arc)
 // 返回值: true=更新后可行, false=不可行
 bool SolveNodeUpdateMP(ProblemParams& params, ProblemData& data,
     IloEnv& env, IloModel& model, IloObjective& obj,
@@ -256,6 +428,7 @@ bool SolveNodeUpdateMP(ProblemParams& params, ProblemData& data,
 
     int num_strip_types = params.num_strip_types_;
     int num_item_types = params.num_item_types_;
+    int num_base_rows = num_strip_types + num_item_types;
 
     // 添加新Y列 (如果SP1找到改进列)
     if (!node->new_y_col_.pattern_.empty()) {
@@ -270,6 +443,30 @@ bool SolveNodeUpdateMP(ProblemParams& params, ProblemData& data,
             cplex_col += cons[num_strip_types + i](0);
         }
 
+        // Arc 约束系数: 如果新列使用受约束的 Arc, 系数为 1
+        // 需要遍历 cons 中 num_base_rows 之后的约束行
+        // 但由于我们不再直接修改子问题变量, 新生成的列如果使用禁用的 Arc
+        // 会在 Arc 约束行中产生系数, 从而影响解的可行性
+        // 这里新列的 arc_set_ 应该已经由子问题生成并存储
+        for (int row = num_base_rows; row < cons.getSize(); row++) {
+            // 通过约束名判断类型 (SP1_zero_, SP1_ub_, SP1_lb_)
+            string con_name = cons[row].getName();
+            if (con_name.find("SP1_") == 0) {
+                // 解析 arc 坐标 (格式: SP1_type_start_end)
+                // 检查新列是否使用此 arc
+                // 这里简化处理: 如果新列使用此 arc, 系数为 1
+                if (node->new_y_col_.arc_set_.size() > 0) {
+                    for (const auto& arc : node->new_y_col_.arc_set_) {
+                        string arc_suffix = "_" + to_string(arc[0]) + "_" + to_string(arc[1]);
+                        if (con_name.find(arc_suffix) != string::npos) {
+                            cplex_col += cons[row](1.0);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
         int col_id = static_cast<int>(node->y_columns_.size()) + 1;
         string var_name = "Y_" + to_string(col_id);
         // 新列上界为无穷 (不受已有分支约束限制)
@@ -280,8 +477,11 @@ bool SolveNodeUpdateMP(ProblemParams& params, ProblemData& data,
         // 保存新列到列池
         YColumn y_col;
         y_col.pattern_ = node->new_y_col_.pattern_;
+        y_col.arc_set_ = node->new_y_col_.arc_set_;
+        y_col.var_index_ = static_cast<int>(vars.getSize()) - 1;
         node->y_columns_.push_back(y_col);
         node->new_y_col_.pattern_.clear();
+        node->new_y_col_.arc_set_.clear();
     }
 
     // 添加新X列 (如果SP2找到改进列)
@@ -298,6 +498,32 @@ bool SolveNodeUpdateMP(ProblemParams& params, ProblemData& data,
             cplex_col += cons[num_strip_types + i](node->new_x_col_.pattern_[i]);
         }
 
+        // SP2 Arc 约束系数
+        for (int row = num_base_rows; row < cons.getSize(); row++) {
+            string con_name = cons[row].getName();
+            // 检查是否为此条带类型的 SP2 约束
+            string prefix = "SP2_";
+            if (con_name.find(prefix) == 0) {
+                // 解析条带类型 (格式: SP2_type_striptype_start_end)
+                size_t pos1 = con_name.find('_', prefix.size());
+                if (pos1 != string::npos) {
+                    size_t pos2 = con_name.find('_', pos1 + 1);
+                    if (pos2 != string::npos) {
+                        int con_strip_type = stoi(con_name.substr(pos1 + 1, pos2 - pos1 - 1));
+                        if (con_strip_type == strip_type && node->new_x_col_.arc_set_.size() > 0) {
+                            for (const auto& arc : node->new_x_col_.arc_set_) {
+                                string arc_suffix = "_" + to_string(arc[0]) + "_" + to_string(arc[1]);
+                                if (con_name.find(arc_suffix) != string::npos) {
+                                    cplex_col += cons[row](1.0);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         int col_id = static_cast<int>(node->x_columns_.size()) + 1;
         string var_name = "X_" + to_string(col_id);
         IloNumVar var(cplex_col, 0, IloInfinity, ILOFLOAT, var_name.c_str());
@@ -308,8 +534,11 @@ bool SolveNodeUpdateMP(ProblemParams& params, ProblemData& data,
         XColumn x_col;
         x_col.strip_type_id_ = strip_type;
         x_col.pattern_ = node->new_x_col_.pattern_;
+        x_col.arc_set_ = node->new_x_col_.arc_set_;
+        x_col.var_index_ = static_cast<int>(vars.getSize()) - 1;
         node->x_columns_.push_back(x_col);
         node->new_x_col_.pattern_.clear();
+        node->new_x_col_.arc_set_.clear();
     }
 
     // 求解更新后的主问题
@@ -328,13 +557,47 @@ bool SolveNodeUpdateMP(ProblemParams& params, ProblemData& data,
     double obj_val = cplex.getValue(obj);
     LOG_FMT("[MP] 目标值: %.4f\n", obj_val);
 
-    // 提取新的对偶价格
+    // 提取新的对偶价格 (基本约束)
     node->duals_.clear();
-    int num_rows = num_strip_types + num_item_types;
-    for (int row = 0; row < num_rows; row++) {
+    for (int row = 0; row < num_base_rows; row++) {
         double dual = cplex.getDual(cons[row]);
         if (dual == -0.0) dual = 0.0;
         node->duals_.push_back(dual);
+    }
+
+    // 更新 Arc 约束对偶价格
+    node->sp1_arc_duals_.clear();
+    node->sp2_arc_duals_.clear();
+    for (int row = num_base_rows; row < cons.getSize(); row++) {
+        string con_name = cons[row].getName();
+        double dual = cplex.getDual(cons[row]);
+        if (dual == -0.0) dual = 0.0;
+
+        if (con_name.find("SP1_") == 0) {
+            // 解析 SP1 arc 约束
+            // 格式: SP1_type_start_end
+            size_t pos1 = con_name.rfind('_');
+            size_t pos2 = con_name.rfind('_', pos1 - 1);
+            if (pos1 != string::npos && pos2 != string::npos) {
+                int arc_end = stoi(con_name.substr(pos1 + 1));
+                int arc_start = stoi(con_name.substr(pos2 + 1, pos1 - pos2 - 1));
+                array<int, 2> arc = {arc_start, arc_end};
+                node->sp1_arc_duals_[arc] = dual;
+            }
+        } else if (con_name.find("SP2_") == 0) {
+            // 解析 SP2 arc 约束
+            // 格式: SP2_type_striptype_start_end
+            size_t pos1 = con_name.rfind('_');
+            size_t pos2 = con_name.rfind('_', pos1 - 1);
+            size_t pos3 = con_name.rfind('_', pos2 - 1);
+            if (pos1 != string::npos && pos2 != string::npos && pos3 != string::npos) {
+                int arc_end = stoi(con_name.substr(pos1 + 1));
+                int arc_start = stoi(con_name.substr(pos2 + 1, pos1 - pos2 - 1));
+                int strip_type = stoi(con_name.substr(pos3 + 1, pos2 - pos3 - 1));
+                array<int, 2> arc = {arc_start, arc_end};
+                node->sp2_arc_duals_[strip_type][arc] = dual;
+            }
+        }
     }
 
     cplex.end();

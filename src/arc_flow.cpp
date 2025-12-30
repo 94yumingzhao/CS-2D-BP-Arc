@@ -9,15 +9,19 @@
 
 #include "2DBP.h"
 
+#include <climits>  // for INT_MAX
+
 using namespace std;
 
 // 生成 SP1 的 Arc Flow 网络 (宽度方向)
-// 网络结构:
+// 网络结构 (符合数学模型 Section 7):
 //   节点: 母板宽度方向上的位置 (0 到 stock_width)
-//   Arc: 放置一种条带，Arc 长度等于条带宽度
+//   物品弧 A^{item}: 放置一种条带，Arc 长度等于条带宽度
+//   损耗弧 A^{loss}: (t, t+1) 表示浪费1单位宽度，保证与背包等价
 // 例如: Arc (10, 30) 表示在位置 10 放置一个宽度为 20 的条带
+//       Arc (10, 11) 表示在位置 10 浪费 1 单位宽度
 void GenerateSP1Arcs(ProblemData& data, ProblemParams& params) {
-    LOG("[Arc Flow] 生成SP1网络 (宽度方向)");
+    LOG("[Arc Flow] 生成SP1网络 (宽度方向, 含loss arcs)");
 
     SP1ArcFlowData& arc_data = data.sp1_arc_data_;
 
@@ -36,14 +40,16 @@ void GenerateSP1Arcs(ProblemData& data, ProblemParams& params) {
     int num_strip_types = params.num_strip_types_;
 
     // 使用 set 收集所有可能的节点位置
-    // 只有在某个 Arc 的起点或终点才是有效节点
+    // 有了 loss arcs 后，所有位置 0..stock_width 都是有效节点
     set<int> node_set;
-    node_set.insert(0);             // 起点必须存在
-    node_set.insert(stock_width);   // 终点必须存在
+    for (int t = 0; t <= stock_width; t++) {
+        node_set.insert(t);
+    }
 
-    // 枚举所有可能的 Arc
+    // 1. 生成物品弧 A^{item}
     // 对于每个起点位置 start，尝试放置每种条带
-    for (int start = 0; start <= stock_width; start++) {
+    int num_item_arcs = 0;
+    for (int start = 0; start < stock_width; start++) {
         for (int j = 0; j < num_strip_types; j++) {
             int strip_width = data.strip_types_[j].width_;
             int end = start + strip_width;
@@ -58,10 +64,24 @@ void GenerateSP1Arcs(ProblemData& data, ProblemParams& params) {
                     int idx = static_cast<int>(arc_data.arc_list_.size());
                     arc_data.arc_to_index_[arc] = idx;
                     arc_data.arc_list_.push_back(arc);
-                    node_set.insert(start);
-                    node_set.insert(end);
+                    num_item_arcs++;
                 }
             }
+        }
+    }
+
+    // 2. 生成损耗弧 A^{loss} = {(t, t+1) : t = 0, ..., W-1}
+    // 损耗弧保证 Arc-Flow 与 "<=" 背包严格等价
+    int num_loss_arcs = 0;
+    for (int t = 0; t < stock_width; t++) {
+        array<int, 2> loss_arc = {t, t + 1};
+
+        // 损耗弧可能与某些长度为1的物品弧重合，需检查
+        if (arc_data.arc_to_index_.find(loss_arc) == arc_data.arc_to_index_.end()) {
+            int idx = static_cast<int>(arc_data.arc_list_.size());
+            arc_data.arc_to_index_[loss_arc] = idx;
+            arc_data.arc_list_.push_back(loss_arc);
+            num_loss_arcs++;
         }
     }
 
@@ -110,17 +130,19 @@ void GenerateSP1Arcs(ProblemData& data, ProblemParams& params) {
 
     LOG_FMT("  节点数: %d (起点1, 终点1, 中间%d)\n",
         (int)node_set.size(), num_mid);
-    LOG_FMT("  Arc数: %d\n", (int)arc_data.arc_list_.size());
+    LOG_FMT("  Arc数: %d (物品弧%d, 损耗弧%d)\n",
+        (int)arc_data.arc_list_.size(), num_item_arcs, num_loss_arcs);
 }
 
 // 生成 SP2 的 Arc Flow 网络 (长度方向)
 // 每种条带类型有独立的 SP2 网络，因为不同条带可放置不同的子板
-// 网络结构:
+// 网络结构 (符合数学模型 Section 7.4):
 //   节点: 条带长度方向上的位置 (0 到 stock_length)
-//   Arc: 放置一种子板，Arc 长度等于子板长度
+//   物品弧 A^{item}: 放置一种子板，Arc 长度等于子板长度
+//   损耗弧 A^{loss}: (t, t+1) 表示浪费1单位长度，保证与背包等价
 // 约束: 只有宽度不超过条带宽度的子板才能放入该条带
 void GenerateSP2Arcs(ProblemData& data, ProblemParams& params, int strip_type_id) {
-    LOG_FMT("[Arc Flow] 生成SP2网络 (条带类型%d)\n", strip_type_id);
+    LOG_FMT("[Arc Flow] 生成SP2网络 (条带类型%d, 含loss arcs)\n", strip_type_id);
 
     // 确保 sp2_arc_data_ 数组足够大
     while ((int)data.sp2_arc_data_.size() <= strip_type_id) {
@@ -146,12 +168,15 @@ void GenerateSP2Arcs(ProblemData& data, ProblemParams& params, int strip_type_id
     int num_item_types = params.num_item_types_;
 
     // 收集所有可能的节点位置
+    // 有了 loss arcs 后，所有位置 0..stock_length 都是有效节点
     set<int> node_set;
-    node_set.insert(0);
-    node_set.insert(stock_length);
+    for (int t = 0; t <= stock_length; t++) {
+        node_set.insert(t);
+    }
 
-    // 枚举所有可能的 Arc (仅考虑宽度匹配的子板)
-    for (int start = 0; start <= stock_length; start++) {
+    // 1. 生成物品弧 A^{item} (仅考虑宽度匹配的子板)
+    int num_item_arcs = 0;
+    for (int start = 0; start < stock_length; start++) {
         for (int i = 0; i < num_item_types; i++) {
             int item_width = data.item_types_[i].width_;
             int item_length = data.item_types_[i].length_;
@@ -170,11 +195,25 @@ void GenerateSP2Arcs(ProblemData& data, ProblemParams& params, int strip_type_id
                         int idx = static_cast<int>(arc_data.arc_list_.size());
                         arc_data.arc_to_index_[arc] = idx;
                         arc_data.arc_list_.push_back(arc);
-                        node_set.insert(start);
-                        node_set.insert(end);
+                        num_item_arcs++;
                     }
                 }
             }
+        }
+    }
+
+    // 2. 生成损耗弧 A^{loss} = {(t, t+1) : t = 0, ..., L-1}
+    // 损耗弧保证 Arc-Flow 与 "<=" 背包严格等价
+    int num_loss_arcs = 0;
+    for (int t = 0; t < stock_length; t++) {
+        array<int, 2> loss_arc = {t, t + 1};
+
+        // 损耗弧可能与某些长度为1的物品弧重合，需检查
+        if (arc_data.arc_to_index_.find(loss_arc) == arc_data.arc_to_index_.end()) {
+            int idx = static_cast<int>(arc_data.arc_list_.size());
+            arc_data.arc_to_index_[loss_arc] = idx;
+            arc_data.arc_list_.push_back(loss_arc);
+            num_loss_arcs++;
         }
     }
 
@@ -216,8 +255,9 @@ void GenerateSP2Arcs(ProblemData& data, ProblemParams& params, int strip_type_id
         }
     }
 
-    LOG_FMT("  节点数: %d, Arc数: %d\n",
-        (int)node_set.size(), (int)arc_data.arc_list_.size());
+    LOG_FMT("  节点数: %d, Arc数: %d (物品弧%d, 损耗弧%d)\n",
+        (int)node_set.size(), (int)arc_data.arc_list_.size(),
+        num_item_arcs, num_loss_arcs);
 }
 
 // 生成所有 Arc Flow 网络
@@ -375,38 +415,68 @@ void ConvertXColsToSP2ArcFlow(vector<XColumn>& x_columns, int strip_type_id,
 }
 
 // 在 SP1 Arc 流量中寻找非整数流量的 Arc (用于分支)
-// 分支策略: 选择流量最接近 0.5 的 Arc 进行分支
+// 候选弧选择准则 (符合数学模型 Section 9.2):
+//   1. |frac(F_a) - 0.5| 最小 (最接近0.5)
+//   2. |F_a| 最大 (tie-break)
+//   3. 弧编号最小 (固定tie-break)
+// 不对损耗弧分支 (损耗弧长度为1)
 // 返回: true = 找到非整数 Arc，false = 所有 Arc 流量都是整数
 bool FindBranchArcSP1(map<int, tuple<int, int, double>>& arc_flow_solution,
     array<int, 2>& branch_arc, double& branch_flow) {
 
-    double max_frac = 0.0;
     bool found = false;
+    double best_dist_to_half = 1.0;  // 越小越好
+    double best_flow_abs = 0.0;      // tie-break: 越大越好
+    int best_arc_idx = INT_MAX;      // tie-break: 越小越好
 
     for (const auto& item : arc_flow_solution) {
+        int arc_idx = item.first;
+        int arc_start = get<0>(item.second);
+        int arc_end = get<1>(item.second);
         double flow = get<2>(item.second);
 
-        // 计算流量的小数部分
-        double frac = flow - floor(flow);
+        // 不对损耗弧分支 (损耗弧长度为1)
+        int arc_length = arc_end - arc_start;
+        if (arc_length == 1) continue;
 
-        // 精度处理: 非常接近整数的流量视为整数
-        // 避免由于浮点误差导致的错误分支
-        if (frac > 0.9999) frac = 0.0;
-        if (frac < 0.0001) frac = 0.0;
+        // 整数判别: |x - round(x)| <= kIntTolerance
+        double rounded = round(flow);
+        double frac_part = fabs(flow - rounded);
 
         // 检查是否为非整数流量
-        if (frac > kZeroTolerance && frac < 1 - kZeroTolerance) {
-            // 计算与 0.5 的距离，距离越小得分越高
-            // 选择最接近 0.5 的 Arc，可以使分支更加平衡
+        if (frac_part > kIntTolerance) {
+            // 计算小数部分 (用于0.5距离计算)
+            double frac = flow - floor(flow);
             double dist_to_half = fabs(frac - 0.5);
-            double score = 0.5 - dist_to_half;
+            double flow_abs = fabs(flow);
 
-            if (score > max_frac || !found) {
-                max_frac = score;
-                branch_arc[0] = get<0>(item.second);
-                branch_arc[1] = get<1>(item.second);
-                branch_flow = flow;
+            // 应用选择准则
+            bool is_better = false;
+            if (!found) {
+                is_better = true;
+            } else if (dist_to_half < best_dist_to_half - kZeroTolerance) {
+                // 规则1: 更接近0.5
+                is_better = true;
+            } else if (fabs(dist_to_half - best_dist_to_half) <= kZeroTolerance) {
+                // 规则2: 流量绝对值更大
+                if (flow_abs > best_flow_abs + kZeroTolerance) {
+                    is_better = true;
+                } else if (fabs(flow_abs - best_flow_abs) <= kZeroTolerance) {
+                    // 规则3: 弧编号更小
+                    if (arc_idx < best_arc_idx) {
+                        is_better = true;
+                    }
+                }
+            }
+
+            if (is_better) {
                 found = true;
+                best_dist_to_half = dist_to_half;
+                best_flow_abs = flow_abs;
+                best_arc_idx = arc_idx;
+                branch_arc[0] = arc_start;
+                branch_arc[1] = arc_end;
+                branch_flow = flow;
             }
         }
     }
@@ -415,10 +485,11 @@ bool FindBranchArcSP1(map<int, tuple<int, int, double>>& arc_flow_solution,
 }
 
 // 在 SP2 Arc 流量中寻找非整数流量的 Arc
-// 逻辑与 SP1 相同
+// 候选弧选择准则与 SP1 相同 (符合数学模型 Section 9.2)
+// 不对损耗弧分支
 bool FindBranchArcSP2(map<int, tuple<int, int, double>>& arc_flow_solution,
     array<int, 2>& branch_arc, double& branch_flow) {
-
+    // 复用 SP1 的选择逻辑
     return FindBranchArcSP1(arc_flow_solution, branch_arc, branch_flow);
 }
 

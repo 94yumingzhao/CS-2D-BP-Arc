@@ -48,10 +48,12 @@
 
 using namespace std;
 
-// 全局常量定义
+// 全局常量定义 (符合数学模型 Section 10)
 // 这些容差值用于处理浮点数比较，避免数值误差导致的错误判断
-constexpr double kRcTolerance = 1.0e-6;     // 检验数 (Reduced Cost) 容差
-                                            // RC > 1 + kRcTolerance 才认为找到改进列
+constexpr double kRcTolerance = 1.0e-7;     // 入列阈值 epsilon_rc (数学模型: 10^-7)
+                                            // RC > kRcTolerance 才认为找到改进列
+constexpr double kIntTolerance = 1.0e-6;    // 整数判别阈值 epsilon_int (数学模型: 10^-6)
+                                            // |x - round(x)| <= kIntTolerance 视为整数
 constexpr double kZeroTolerance = 1.0e-10;  // 零值容差，|x| < kZeroTolerance 视为 0
 
 // 算法控制参数
@@ -235,6 +237,12 @@ struct BPNode {
     map<int, vector<int>> sp2_lower_bounds_;            // 对应的上界值
     map<int, vector<array<int, 2>>> sp2_greater_arcs_;  // 条带类型 j 的下界约束 Arc
     map<int, vector<int>> sp2_greater_bounds_;          // 对应的下界值
+
+    // Arc 约束对偶价格 (数学模型 Section 9.5)
+    // 弧分支约束作为行约束添加到 RMP，求解后获取对偶价格 μ_a
+    // 在子问题中用 μ_a 修正弧的收益: π_i → π_i + μ_a
+    map<array<int, 2>, double> sp1_arc_duals_;                  // SP1 arc 对偶价格
+    map<int, map<array<int, 2>, double>> sp2_arc_duals_;        // SP2 arc 对偶价格 (按条带类型)
 
     // 主问题数据
     vector<vector<double>> matrix_;             // 完整系数矩阵 (调试用)

@@ -20,8 +20,9 @@
 
 using namespace std;
 
-// 检查 LP 解是否为整数解
+// 检查 LP 解是否为整数解 (符合数学模型 Section 10)
 // 遍历所有 Y 列和 X 列，检查解值是否都接近整数
+// 整数判别: |x - round(x)| <= kIntTolerance
 // 返回: true = 整数解，false = 存在分数解
 bool IsIntegerSolution(NodeSolution& solution) {
     // 检查 Y 列 (母板切割方案)
@@ -30,10 +31,9 @@ bool IsIntegerSolution(NodeSolution& solution) {
 
         // 只检查非零解值
         if (val > kZeroTolerance) {
-            double frac = val - floor(val);
-
-            // 判断是否为分数: 小数部分不接近 0 且不接近 1
-            if (frac > kZeroTolerance && frac < 1 - kZeroTolerance) {
+            // 整数判别: |x - round(x)| <= kIntTolerance
+            double rounded = round(val);
+            if (fabs(val - rounded) > kIntTolerance) {
                 return false;
             }
         }
@@ -44,9 +44,8 @@ bool IsIntegerSolution(NodeSolution& solution) {
         double val = solution.x_columns_[i].value_;
 
         if (val > kZeroTolerance) {
-            double frac = val - floor(val);
-
-            if (frac > kZeroTolerance && frac < 1 - kZeroTolerance) {
+            double rounded = round(val);
+            if (fabs(val - rounded) > kIntTolerance) {
                 return false;
             }
         }
@@ -109,7 +108,10 @@ int SelectBranchVar(BPNode* node) {
 }
 
 // 选择分支 Arc (Arc 流量分支策略)
-// 分支优先级: SP1 Arc > SP2 Arc
+// 分支优先级 (符合数学模型 Section 9.2-9.3):
+//   1. 主分支: SP2 物品弧 (长度方向)
+//   2. 备用分支: SP1 物品弧 (宽度方向)
+//   3. 兜底分支: 变量分支 (未实现)
 // 策略: 将 LP 解转换为 Arc 流量，选择流量最接近 0.5 的分数 Arc
 // 返回: 分支类型 (kBranchNone / kBranchSP1Arc / kBranchSP2Arc)
 int SelectBranchArc(ProblemParams& params, ProblemData& data, BPNode* node) {
@@ -119,26 +121,10 @@ int SelectBranchArc(ProblemParams& params, ProblemData& data, BPNode* node) {
     node->branch_arc_flow_ = -1;
     node->branch_arc_strip_type_ = -1;
 
-    // 步骤 1: 检查 SP1 Arc (宽度方向)
-    // 将所有 Y 列的 LP 解转换为 SP1 Arc 流量
-    map<int, tuple<int, int, double>> sp1_arc_flow;
-    ConvertYColsToSP1ArcFlow(node->solution_.y_columns_, data, sp1_arc_flow);
-
     array<int, 2> branch_arc;
     double branch_flow;
 
-    // 在 SP1 Arc 中寻找分数流量
-    if (FindBranchArcSP1(sp1_arc_flow, branch_arc, branch_flow)) {
-        // 找到分数 Arc，设置分支信息
-        node->branch_type_ = kBranchSP1Arc;
-        node->branch_arc_ = branch_arc;
-        node->branch_arc_flow_ = branch_flow;
-        LOG_FMT("[分支] 选择 SP1 Arc [%d,%d] 流量=%.4f\n",
-            branch_arc[0], branch_arc[1], branch_flow);
-        return kBranchSP1Arc;
-    }
-
-    // 步骤 2: SP1 全整数，检查 SP2 Arc (长度方向)
+    // 步骤 1: 主分支 - 检查 SP2 Arc (长度方向)
     // 需要遍历所有条带类型，因为每种条带有独立的 SP2 网络
     for (int j = 0; j < params.num_strip_types_; j++) {
         map<int, tuple<int, int, double>> sp2_arc_flow;
@@ -154,6 +140,21 @@ int SelectBranchArc(ProblemParams& params, ProblemData& data, BPNode* node) {
                 branch_arc[0], branch_arc[1], j, branch_flow);
             return kBranchSP2Arc;
         }
+    }
+
+    // 步骤 2: 备用分支 - 检查 SP1 Arc (宽度方向)
+    // 将所有 Y 列的 LP 解转换为 SP1 Arc 流量
+    map<int, tuple<int, int, double>> sp1_arc_flow;
+    ConvertYColsToSP1ArcFlow(node->solution_.y_columns_, data, sp1_arc_flow);
+
+    if (FindBranchArcSP1(sp1_arc_flow, branch_arc, branch_flow)) {
+        // 找到分数 Arc，设置分支信息
+        node->branch_type_ = kBranchSP1Arc;
+        node->branch_arc_ = branch_arc;
+        node->branch_arc_flow_ = branch_flow;
+        LOG_FMT("[分支] 选择 SP1 Arc [%d,%d] 流量=%.4f\n",
+            branch_arc[0], branch_arc[1], branch_flow);
+        return kBranchSP1Arc;
     }
 
     // 步骤 3: 所有 Arc 流量都是整数，无需分支

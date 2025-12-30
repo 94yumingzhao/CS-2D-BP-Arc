@@ -104,11 +104,10 @@ bool SolveNodeSP1Knapsack(ProblemParams& params, ProblemData& data, BPNode* node
 // 功能: 使用网络流模型求解背包问题, 支持Arc分支约束
 // Arc Flow优势:
 //   - 可在子问题中施加Arc约束, 保证分支切割的有效性
-//   - 分支约束通过修改Arc变量的上下界实现
-// 从父节点继承的Arc约束:
-//   - sp1_zero_arcs_: 禁用Arc (setUB(0))
-//   - sp1_lower_arcs_: Arc上界约束 (setUB(bound))
-//   - sp1_greater_arcs_: Arc下界约束 (setLB(bound))
+// Arc约束处理 (数学模型 Section 9.5):
+//   - 零弧约束: 直接禁用该Arc (setUB(0))
+//   - 非零约束: 使用对偶价格 μ_a 修正弧收益: v_j → v_j + μ_a
+//   - 对偶价格来自RMP中的Arc行约束
 // 返回值: true=列生成收敛, false=找到改进列
 bool SolveNodeSP1ArcFlow(ProblemParams& params, ProblemData& data, BPNode* node) {
     SP1ArcFlowData& arc_data = data.sp1_arc_data_;
@@ -125,7 +124,9 @@ bool SolveNodeSP1ArcFlow(ProblemParams& params, ProblemData& data, BPNode* node)
     IloNumVarArray vars(env);
 
     // 为每个Arc创建0-1整数变量
-    // 目标函数: max sum(v_j * a_i), v_j为Arc对应条带的对偶价格
+    // 目标函数: max sum((v_j + μ_a) * a_i)
+    // 物品弧: v_j为Arc对应条带的对偶价格, μ_a为Arc约束对偶价格
+    // 损耗弧: 收益为0 (符合数学模型 Section 7.3)
     IloExpr obj_expr(env);
     for (int i = 0; i < num_arcs; i++) {
         string var_name = "a_" + to_string(i + 1);
@@ -133,11 +134,27 @@ bool SolveNodeSP1ArcFlow(ProblemParams& params, ProblemData& data, BPNode* node)
         vars.add(var);
 
         // Arc长度对应条带宽度, 映射到对偶价格
-        int arc_width = arc_data.arc_list_[i][1] - arc_data.arc_list_[i][0];
-        int strip_idx = data.width_to_strip_index_[arc_width];
-        double dual = node->duals_[strip_idx];
-        if (dual != 0.0) {
-            obj_expr += vars[i] * dual;
+        const auto& arc = arc_data.arc_list_[i];
+        int arc_width = arc[1] - arc[0];
+
+        // 基础收益: 物品弧为 v_j, 损耗弧为 0
+        double profit = 0.0;
+        if (data.width_to_strip_index_.count(arc_width) > 0) {
+            int strip_idx = data.width_to_strip_index_.at(arc_width);
+            profit = node->duals_[strip_idx];
+        }
+
+        // 添加 Arc 约束对偶价格修正 (数学模型 Section 9.5)
+        // μ_a 来自 RMP 中 Arc 行约束的对偶价格
+        if (node->sp1_arc_duals_.count(arc) > 0) {
+            double mu_a = node->sp1_arc_duals_.at(arc);
+            profit += mu_a;
+            LOG_FMT("  SP1 Arc (%d,%d): profit %.4f + mu %.4f = %.4f\n",
+                arc[0], arc[1], profit - mu_a, mu_a, profit);
+        }
+
+        if (fabs(profit) > kZeroTolerance) {
+            obj_expr += vars[i] * profit;
         }
     }
 
@@ -185,8 +202,8 @@ bool SolveNodeSP1ArcFlow(ProblemParams& params, ProblemData& data, BPNode* node)
         out_expr.end();
     }
 
-    // 添加从父节点继承的SP1 Arc约束
     // 禁用Arc约束: 设置上界为0, 完全禁止使用该Arc
+    // 这是零弧分支的正确处理: 子问题不生成使用该Arc的新pattern
     for (const auto& arc : node->sp1_zero_arcs_) {
         if (arc_data.arc_to_index_.count(arc)) {
             int idx = arc_data.arc_to_index_.at(arc);
@@ -194,23 +211,8 @@ bool SolveNodeSP1ArcFlow(ProblemParams& params, ProblemData& data, BPNode* node)
         }
     }
 
-    // Arc上界约束: Arc流量 <= N (来自左分支)
-    for (size_t i = 0; i < node->sp1_lower_arcs_.size(); i++) {
-        const auto& arc = node->sp1_lower_arcs_[i];
-        if (arc_data.arc_to_index_.count(arc)) {
-            int idx = arc_data.arc_to_index_.at(arc);
-            vars[idx].setUB(node->sp1_lower_bounds_[i]);
-        }
-    }
-
-    // Arc下界约束: Arc流量 >= N (来自右分支)
-    for (size_t i = 0; i < node->sp1_greater_arcs_.size(); i++) {
-        const auto& arc = node->sp1_greater_arcs_[i];
-        if (arc_data.arc_to_index_.count(arc)) {
-            int idx = arc_data.arc_to_index_.at(arc);
-            vars[idx].setLB(node->sp1_greater_bounds_[i]);
-        }
-    }
+    // 注意: 非零Arc约束 (sp1_lower_arcs_, sp1_greater_arcs_) 不再在此处处理
+    // 它们已作为RMP行约束, 通过对偶价格 μ_a 影响子问题目标函数
 
     // 求解Arc Flow子问题
     LOG_FMT("[SP1-%d] 节点%d 求解SP1 (Arc Flow)\n", node->iter_, node->id_);
@@ -229,17 +231,31 @@ bool SolveNodeSP1ArcFlow(ProblemParams& params, ProblemData& data, BPNode* node)
             cg_converged = false;
 
             // 根据选中的Arc构建切割模式
+            // 只计物品弧, 不计损耗弧
             vector<int> pattern(num_strip_types, 0);
+            set<array<int, 2>> selected_arcs;  // 记录选中的Arc用于约束系数
             for (int i = 0; i < num_arcs; i++) {
                 double val = cplex.getValue(vars[i]);
                 if (val > 0.5) {  // Arc被选中
-                    int arc_width = arc_data.arc_list_[i][1] - arc_data.arc_list_[i][0];
-                    int strip_idx = data.width_to_strip_index_[arc_width];
-                    pattern[strip_idx]++;
+                    const auto& arc = arc_data.arc_list_[i];
+                    selected_arcs.insert(arc);
+                    int arc_width = arc[1] - arc[0];
+                    // 只统计物品弧
+                    if (data.width_to_strip_index_.count(arc_width) > 0) {
+                        int strip_idx = data.width_to_strip_index_.at(arc_width);
+                        pattern[strip_idx]++;
+                    }
+                    // else: 损耗弧, 不计入pattern
                 }
             }
             node->new_y_col_.pattern_ = pattern;
+            node->new_y_col_.arc_set_ = selected_arcs;
+            LOG("  [SP1] 找到改进列");
+        } else {
+            LOG("  [SP1] 收敛");
         }
+    } else {
+        LOG("  [SP1] 子问题不可行");
     }
 
     // 释放CPLEX资源
@@ -400,10 +416,10 @@ bool SolveNodeSP2Knapsack(ProblemParams& params, ProblemData& data,
 //   - 节点: 0, 1, 2, ..., L (表示条带长度的使用位置)
 //   - Arc (i, j): 在位置i放置长度为(j-i)的子板
 //   - 每种条带类型有独立的Arc网络 (因宽度不同, 可装入的子板不同)
-// 从父节点继承的Arc约束 (按条带类型索引):
-//   - sp2_zero_arcs_[strip_type_id]: 禁用的Arc
-//   - sp2_lower_arcs_[strip_type_id]: Arc上界约束
-//   - sp2_greater_arcs_[strip_type_id]: Arc下界约束
+// Arc约束处理 (数学模型 Section 9.5):
+//   - 零弧约束: 直接禁用该Arc (setUB(0))
+//   - 非零约束: 使用对偶价格 μ_a 修正弧收益: π_i → π_i + μ_a
+//   - 对偶价格来自RMP中的Arc行约束
 // 返回值: true=列生成收敛, false=找到改进列
 bool SolveNodeSP2ArcFlow(ProblemParams& params, ProblemData& data,
     BPNode* node, int strip_type_id) {
@@ -425,8 +441,15 @@ bool SolveNodeSP2ArcFlow(ProblemParams& params, ProblemData& data,
     IloModel model(env);
     IloNumVarArray vars(env);
 
+    // 获取该条带类型的Arc对偶价格
+    const map<array<int, 2>, double>* arc_duals = nullptr;
+    if (node->sp2_arc_duals_.count(strip_type_id)) {
+        arc_duals = &node->sp2_arc_duals_.at(strip_type_id);
+    }
+
     // 为每个Arc创建0-1整数变量
-    // 目标函数: max sum(pi_i * a_k), pi_i为Arc对应子板的对偶价格
+    // 目标函数: max sum((π_i + μ_a) * a_k)
+    // π_i为Arc对应子板的对偶价格, μ_a为Arc约束对偶价格
     IloExpr obj_expr(env);
     for (int i = 0; i < num_arcs; i++) {
         string var_name = "a_" + to_string(i + 1);
@@ -434,13 +457,27 @@ bool SolveNodeSP2ArcFlow(ProblemParams& params, ProblemData& data,
         vars.add(var);
 
         // Arc长度对应子板长度, 映射到对偶价格
-        int arc_len = arc_data.arc_list_[i][1] - arc_data.arc_list_[i][0];
+        const auto& arc = arc_data.arc_list_[i];
+        int arc_len = arc[1] - arc[0];
+
+        // 基础收益: 物品弧为 π_i, 损耗弧为 0
+        double profit = 0.0;
         if (data.length_to_item_index_.count(arc_len)) {
             int item_idx = data.length_to_item_index_[arc_len];
-            double dual = node->duals_[num_strip_types + item_idx];
-            if (dual > 0) {
-                obj_expr += vars[i] * dual;
-            }
+            profit = node->duals_[num_strip_types + item_idx];
+        }
+
+        // 添加 Arc 约束对偶价格修正 (数学模型 Section 9.5)
+        // μ_a 来自 RMP 中 Arc 行约束的对偶价格
+        if (arc_duals != nullptr && arc_duals->count(arc) > 0) {
+            double mu_a = arc_duals->at(arc);
+            profit += mu_a;
+            LOG_FMT("  SP2[%d] Arc (%d,%d): profit %.4f + mu %.4f = %.4f\n",
+                strip_type_id, arc[0], arc[1], profit - mu_a, mu_a, profit);
+        }
+
+        if (fabs(profit) > kZeroTolerance) {
+            obj_expr += vars[i] * profit;
         }
     }
 
@@ -488,8 +525,8 @@ bool SolveNodeSP2ArcFlow(ProblemParams& params, ProblemData& data,
         out_expr.end();
     }
 
-    // 添加从父节点继承的SP2 Arc约束 (针对当前条带类型)
-    // 禁用Arc约束: 设置上界为0
+    // 禁用Arc约束: 设置上界为0, 完全禁止使用该Arc
+    // 这是零弧分支的正确处理: 子问题不生成使用该Arc的新pattern
     if (node->sp2_zero_arcs_.count(strip_type_id)) {
         for (const auto& arc : node->sp2_zero_arcs_.at(strip_type_id)) {
             if (arc_data.arc_to_index_.count(arc)) {
@@ -499,29 +536,8 @@ bool SolveNodeSP2ArcFlow(ProblemParams& params, ProblemData& data,
         }
     }
 
-    // Arc上界约束: Arc流量 <= N (来自左分支)
-    if (node->sp2_lower_arcs_.count(strip_type_id)) {
-        const auto& arcs = node->sp2_lower_arcs_.at(strip_type_id);
-        const auto& bounds = node->sp2_lower_bounds_.at(strip_type_id);
-        for (size_t i = 0; i < arcs.size(); i++) {
-            if (arc_data.arc_to_index_.count(arcs[i])) {
-                int idx = arc_data.arc_to_index_.at(arcs[i]);
-                vars[idx].setUB(bounds[i]);
-            }
-        }
-    }
-
-    // Arc下界约束: Arc流量 >= N (来自右分支)
-    if (node->sp2_greater_arcs_.count(strip_type_id)) {
-        const auto& arcs = node->sp2_greater_arcs_.at(strip_type_id);
-        const auto& bounds = node->sp2_greater_bounds_.at(strip_type_id);
-        for (size_t i = 0; i < arcs.size(); i++) {
-            if (arc_data.arc_to_index_.count(arcs[i])) {
-                int idx = arc_data.arc_to_index_.at(arcs[i]);
-                vars[idx].setLB(bounds[i]);
-            }
-        }
-    }
+    // 注意: 非零Arc约束 (sp2_lower_arcs_, sp2_greater_arcs_) 不再在此处处理
+    // 它们已作为RMP行约束, 通过对偶价格 μ_a 影响子问题目标函数
 
     // 求解Arc Flow子问题
     LOG_FMT("[SP2-%d] 条带类型%d 求解SP2 (Arc Flow)\n", node->iter_, strip_type_id);
@@ -542,10 +558,13 @@ bool SolveNodeSP2ArcFlow(ProblemParams& params, ProblemData& data,
 
             // 根据选中的Arc构建切割模式
             vector<int> pattern(num_item_types, 0);
+            set<array<int, 2>> selected_arcs;  // 记录选中的Arc用于约束系数
             for (int i = 0; i < num_arcs; i++) {
                 double val = cplex.getValue(vars[i]);
                 if (val > 0.5) {  // Arc被选中
-                    int arc_len = arc_data.arc_list_[i][1] - arc_data.arc_list_[i][0];
+                    const auto& arc = arc_data.arc_list_[i];
+                    selected_arcs.insert(arc);
+                    int arc_len = arc[1] - arc[0];
                     if (data.length_to_item_index_.count(arc_len)) {
                         int item_idx = data.length_to_item_index_[arc_len];
                         pattern[item_idx]++;
@@ -553,8 +572,14 @@ bool SolveNodeSP2ArcFlow(ProblemParams& params, ProblemData& data,
                 }
             }
             node->new_x_col_.pattern_ = pattern;
+            node->new_x_col_.arc_set_ = selected_arcs;
             node->new_strip_type_ = strip_type_id;
+            LOG("  [SP2] 找到改进列");
+        } else {
+            LOG("  [SP2] 收敛");
         }
+    } else {
+        LOG("  [SP2] 子问题不可行");
     }
 
     // 释放CPLEX资源
